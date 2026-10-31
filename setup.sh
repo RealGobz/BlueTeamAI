@@ -190,10 +190,20 @@ if [ "$IS_WINDOWS" = true ]; then
     if [ "$SERVICE_RUNNING" = true ]; then
         echo "      [OK] Microsoft Sysmon service is active and running."
     else
-        echo "      [!] Sysmon service is not running."
-        echo "          To install/start Sysmon with SwiftOnSecurity configuration:"
-        echo "          Run in an Administrator PowerShell:"
-        echo "          & 'tools/sysmon/Sysmon64.exe' -accepteula -i 'tools/sysmon/sysmonconfig-export.xml'"
+        echo "      [!] Sysmon service is not running. Attempting automatic installation..."
+        if [ -f "$SYSMON_EXE" ] && [ -f "$SYSMON_CONFIG" ]; then
+            "$SYSMON_EXE" -accepteula -i "$SYSMON_CONFIG" 2>/dev/null || true
+            if sc.exe query Sysmon64 2>&1 | grep -q "RUNNING"; then
+                echo "      [OK] Microsoft Sysmon service installed and started successfully!"
+                SERVICE_RUNNING=true
+            fi
+        fi
+        if [ "$SERVICE_RUNNING" = false ]; then
+            echo "          Admin privileges required to install Sysmon."
+            echo "          To install Sysmon with SwiftOnSecurity configuration manually:"
+            echo "          Run in an Administrator PowerShell:"
+            echo "          & 'tools/sysmon/Sysmon64.exe' -accepteula -i 'tools/sysmon/sysmonconfig-export.xml'"
+        fi
     fi
 else
     echo "      [NOTE] Non-Windows host detected. Sysmon service setup skipped."

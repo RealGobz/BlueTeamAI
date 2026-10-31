@@ -224,6 +224,17 @@ if ($SkipAzure) {
                 Write-Host "      [EXISTS] Resource Group: $ResourceGroupName" -ForegroundColor DarkGray
             }
 
+            # Check for soft-deleted Cognitive Services accounts with btai- prefix and purge to prevent collision
+            $DeletedAccounts = az cognitiveservices account list-deleted --output json 2>$null | ConvertFrom-Json
+            if ($DeletedAccounts) {
+                foreach ($delAcc in $DeletedAccounts) {
+                    if ($delAcc.name -like "btai-*-aiservices" -and $delAcc.location -eq $AzureLocation) {
+                        Write-Host "      [!] Purging soft-deleted Cognitive Services account '$($delAcc.name)' for fresh deployment..." -ForegroundColor Yellow
+                        az cognitiveservices account purge --location $AzureLocation --resource-group $ResourceGroupName --name $delAcc.name --output none 2>$null
+                    }
+                }
+            }
+
             # 2. Deploy Bicep template
             $BicepPath = Join-Path $PSScriptRoot "azure.bicep"
             if (Test-Path $BicepPath) {
@@ -231,12 +242,18 @@ if ($SkipAzure) {
                 Write-Host "      (Provisions Foundry Hub, Project, and Claude 3.5 Sonnet deployment)..." -ForegroundColor Gray
 
                 $DeployName = "btai-deploy-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-                $DeployResultRaw = az deployment group create `
-                    --resource-group $ResourceGroupName `
-                    --template-file $BicepPath `
-                    --name $DeployName `
-                    --query "properties.outputs" `
-                    --output json 2>&1
+                $prevEap = $ErrorActionPreference
+                $ErrorActionPreference = "Continue"
+                try {
+                    $DeployResultRaw = az deployment group create `
+                        --resource-group $ResourceGroupName `
+                        --template-file $BicepPath `
+                        --name $DeployName `
+                        --query "properties.outputs" `
+                        --output json 2>&1
+                } finally {
+                    $ErrorActionPreference = $prevEap
+                }
 
                 if ($LASTEXITCODE -ne 0) {
                     Write-Host "      [!] Azure Bicep deployment returned an error:" -ForegroundColor Red
@@ -357,5 +374,4 @@ if (Test-Path $EnvFileSummary) {
         Write-Host "    To enable global hash reputation lookups (lookup_hash), get a free API key at virustotal.com and add:" -ForegroundColor Gray
         Write-Host "    VT_API_KEY=your_key_here" -ForegroundColor Gray
     }
-}
 }
