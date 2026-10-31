@@ -1,0 +1,343 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.47.16.16243",
+      "templateHash": "9125468751802944772"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region for all resources. Defaults to the resource group location."
+      }
+    },
+    "baseName": {
+      "type": "string",
+      "defaultValue": "[format('btai-{0}', uniqueString(resourceGroup().id))]",
+      "metadata": {
+        "description": "Base name prefix used to generate unique resource names."
+      }
+    },
+    "aiServicesName": {
+      "type": "string",
+      "defaultValue": "[format('{0}-aiservices', parameters('baseName'))]",
+      "metadata": {
+        "description": "Name of the Azure AI Services multi-service account."
+      }
+    },
+    "hubName": {
+      "type": "string",
+      "defaultValue": "[format('{0}-hub', parameters('baseName'))]",
+      "metadata": {
+        "description": "Name of the Azure AI Foundry Hub workspace."
+      }
+    },
+    "projectName": {
+      "type": "string",
+      "defaultValue": "[format('{0}-project', parameters('baseName'))]",
+      "metadata": {
+        "description": "Name of the Azure AI Foundry Project workspace."
+      }
+    },
+    "deploymentName": {
+      "type": "string",
+      "defaultValue": "agent_llm",
+      "metadata": {
+        "description": "Name of the LLM deployment. Consumed by the agent as LLM_DEPLOYMENT_NAME."
+      }
+    },
+    "modelName": {
+      "type": "string",
+      "defaultValue": "gpt-4o",
+      "metadata": {
+        "description": "Model identifier in the Azure AI model catalog."
+      }
+    },
+    "modelFormat": {
+      "type": "string",
+      "defaultValue": "OpenAI",
+      "metadata": {
+        "description": "Format provider for the model."
+      }
+    },
+    "modelVersion": {
+      "type": "string",
+      "defaultValue": "2024-11-20",
+      "metadata": {
+        "description": "Version of the Claude Sonnet / GPT model."
+      }
+    },
+    "skuName": {
+      "type": "string",
+      "defaultValue": "GlobalStandard",
+      "metadata": {
+        "description": "SKU name for the model deployment (GlobalStandard or Standard)."
+      }
+    },
+    "capacity": {
+      "type": "int",
+      "defaultValue": 10,
+      "metadata": {
+        "description": "Capacity allocated to the model deployment (in thousands of TPM)."
+      }
+    },
+    "organizationName": {
+      "type": "string",
+      "defaultValue": "BlueTeamingAI",
+      "metadata": {
+        "description": "Legal organization name for automated EULA acceptance of partner models."
+      }
+    },
+    "countryCode": {
+      "type": "string",
+      "defaultValue": "US",
+      "metadata": {
+        "description": "Two-letter ISO country code for partner terms acceptance."
+      }
+    },
+    "industry": {
+      "type": "string",
+      "defaultValue": "technology",
+      "allowedValues": [
+        "technology",
+        "finance",
+        "healthcare",
+        "education",
+        "retail",
+        "manufacturing",
+        "government",
+        "media",
+        "other"
+      ],
+      "metadata": {
+        "description": "Industry category for partner terms acceptance."
+      }
+    },
+    "storageAccountName": {
+      "type": "string",
+      "defaultValue": "[take(replace(format('{0}sa', parameters('baseName')), '-', ''), 24)]",
+      "metadata": {
+        "description": "Name of the supporting Azure Storage Account (must be lowercase alphanumeric <= 24 chars)."
+      }
+    },
+    "keyVaultName": {
+      "type": "string",
+      "defaultValue": "[take(format('{0}-kv', parameters('baseName')), 24)]",
+      "metadata": {
+        "description": "Name of the supporting Azure Key Vault."
+      }
+    },
+    "appInsightsName": {
+      "type": "string",
+      "defaultValue": "[format('{0}-ai', parameters('baseName'))]",
+      "metadata": {
+        "description": "Name of the supporting Azure Application Insights."
+      }
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": {
+        "Project": "BlueTeamingAI",
+        "ManagedBy": "Bicep",
+        "Environment": "Development"
+      },
+      "metadata": {
+        "description": "Tags applied to all provisioned resources."
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-05-01",
+      "name": "[parameters('storageAccountName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "kind": "StorageV2",
+      "properties": {
+        "minimumTlsVersion": "TLS1_2",
+        "allowBlobPublicAccess": false,
+        "supportsHttpsTrafficOnly": true
+      }
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults",
+      "apiVersion": "2023-07-01",
+      "name": "[parameters('keyVaultName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "tenantId": "[subscription().tenantId]",
+        "sku": {
+          "family": "A",
+          "name": "standard"
+        },
+        "enableRbacAuthorization": true,
+        "enableSoftDelete": true
+      }
+    },
+    {
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2020-02-02",
+      "name": "[parameters('appInsightsName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "kind": "web",
+      "properties": {
+        "Application_Type": "web"
+      }
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts",
+      "apiVersion": "2026-05-01",
+      "name": "[parameters('aiServicesName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "kind": "AIServices",
+      "sku": {
+        "name": "S0"
+      },
+      "properties": {
+        "customSubDomainName": "[parameters('aiServicesName')]",
+        "publicNetworkAccess": "Enabled"
+      }
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/deployments",
+      "apiVersion": "2026-05-01",
+      "name": "[format('{0}/{1}', parameters('aiServicesName'), parameters('deploymentName'))]",
+      "sku": {
+        "name": "[parameters('skuName')]",
+        "capacity": "[parameters('capacity')]"
+      },
+      "properties": {
+        "model": {
+          "format": "[parameters('modelFormat')]",
+          "name": "[parameters('modelName')]",
+          "version": "[parameters('modelVersion')]"
+        },
+        "modelProviderData": "[if(equals(parameters('modelFormat'), 'Anthropic'), createObject('organizationName', parameters('organizationName'), 'countryCode', parameters('countryCode'), 'industry', parameters('industry')), null())]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('aiServicesName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.MachineLearningServices/workspaces",
+      "apiVersion": "2024-04-01-preview",
+      "name": "[parameters('hubName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "kind": "Hub",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "friendlyName": "BlueTeamingAI Hub",
+        "description": "Foundry Hub managing shared connections and models",
+        "storageAccount": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+        "keyVault": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]",
+        "applicationInsights": "[resourceId('Microsoft.Insights/components', parameters('appInsightsName'))]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Insights/components', parameters('appInsightsName'))]",
+        "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.MachineLearningServices/workspaces/connections",
+      "apiVersion": "2024-04-01-preview",
+      "name": "[format('{0}/{1}', parameters('hubName'), format('{0}-connection-AIServices', parameters('hubName')))]",
+      "properties": {
+        "category": "AzureOpenAI",
+        "target": "[reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('aiServicesName')), '2026-05-01').endpoint]",
+        "authType": "ApiKey",
+        "isSharedToAll": true,
+        "credentials": {
+          "key": "[listKeys(resourceId('Microsoft.CognitiveServices/accounts', parameters('aiServicesName')), '2026-05-01').key1]"
+        },
+        "metadata": {
+          "ApiType": "Azure",
+          "ResourceId": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('aiServicesName'))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.MachineLearningServices/workspaces', parameters('hubName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('aiServicesName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.MachineLearningServices/workspaces",
+      "apiVersion": "2024-04-01-preview",
+      "name": "[parameters('projectName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "kind": "Project",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "friendlyName": "BlueTeamingAI Investigator Project",
+        "description": "Foundry Project workspace used by the LangGraph Investigator Agent",
+        "hubResourceId": "[resourceId('Microsoft.MachineLearningServices/workspaces', parameters('hubName'))]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.MachineLearningServices/workspaces', parameters('hubName'))]",
+        "[resourceId('Microsoft.MachineLearningServices/workspaces/connections', parameters('hubName'), format('{0}-connection-AIServices', parameters('hubName')))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "PROJECT_ENDPOINT": {
+      "type": "string",
+      "metadata": {
+        "description": "The Project Endpoint URL required for azure-ai-projects AIProjectClient."
+      },
+      "value": "[format('https://{0}.services.ai.azure.com/api/projects/{1}', parameters('aiServicesName'), parameters('projectName'))]"
+    },
+    "LLM_DEPLOYMENT_NAME": {
+      "type": "string",
+      "metadata": {
+        "description": "The deployment name for the Claude 3.5 Sonnet LLM."
+      },
+      "value": "[parameters('deploymentName')]"
+    },
+    "AI_SERVICES_ENDPOINT": {
+      "type": "string",
+      "metadata": {
+        "description": "The direct Azure AI Services endpoint."
+      },
+      "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('aiServicesName')), '2026-05-01').endpoint]"
+    },
+    "AI_SERVICES_NAME": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the AI Services resource."
+      },
+      "value": "[parameters('aiServicesName')]"
+    },
+    "HUB_NAME": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the AI Foundry Hub."
+      },
+      "value": "[parameters('hubName')]"
+    },
+    "PROJECT_NAME": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the AI Foundry Project."
+      },
+      "value": "[parameters('projectName')]"
+    }
+  }
+}

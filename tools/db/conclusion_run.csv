@@ -1,0 +1,1 @@
+scenario_id,date_time,expected_verdict,detected_by_rule,alert_id,tools_used_in_order,total_turns,tokens_cost,time_to_verdict,verdict,confidence,reasoning_quality,asked_user,actions_proposed,human_decision,action_result,left_behind,correct,problems,notes

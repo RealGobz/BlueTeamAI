@@ -1,0 +1,13 @@
+# BlueTeamingAI Dependencies
+# Approved in about.md: standard library plus pywin32, pyyaml, python-evtx
+pywin32>=306
+pyyaml>=6.0
+python-evtx>=0.7.4
+python-dotenv
+langchain-azure-ai 
+langgraph 
+azure-identity
+psutil
+requests
+langgraph-checkpoint-sqlite
+winotify

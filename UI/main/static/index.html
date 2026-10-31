@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BlueTeamingAI - Investigation Console</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div id="app" class="app-container">
+    <!-- Left Panel: Thread Navigation -->
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-header">
+        <h1 class="sidebar-title">Investigations</h1>
+        <span id="active-runs-badge" class="badge badge-subtle">0 active</span>
+      </div>
+      <div id="thread-list" class="thread-list" role="navigation" aria-label="Alert Threads">
+        <div class="empty-state">Loading threads...</div>
+      </div>
+    </aside>
+
+    <!-- Main Content Panel: Thread Timeline & Chat -->
+    <main id="main-panel" class="main-panel">
+      <!-- No Thread Selected State -->
+      <div id="no-thread-selected" class="empty-view">
+        <div class="empty-view-content">
+          <h2>No Thread Selected</h2>
+          <p>Select an alert thread from the left panel to review its timeline and chat with the agent.</p>
+        </div>
+      </div>
+
+      <!-- Active Thread View -->
+      <div id="thread-view" class="thread-view hidden">
+        <!-- Thread Header -->
+        <header id="thread-header" class="thread-header">
+          <div class="header-main">
+            <div class="header-title-row">
+              <span id="header-level" class="badge"></span>
+              <h2 id="header-title" class="header-title"></h2>
+              <span id="header-status" class="badge"></span>
+            </div>
+            <div class="header-meta-row">
+              <span id="header-host" class="meta-item"></span>
+              <span id="header-user" class="meta-item"></span>
+              <span id="header-time" class="meta-item"></span>
+              <span id="header-thread-id" class="meta-item meta-muted"></span>
+            </div>
+          </div>
+        </header>
+
+        <!-- Timeline Container -->
+        <div id="timeline-container" class="timeline-container">
+          <div id="timeline-items" class="timeline-items">
+            <!-- Rendered dynamically by app.js -->
+          </div>
+        </div>
+
+        <!-- Input Bar -->
+        <footer id="input-footer" class="input-footer">
+          <div id="input-status-banner" class="input-status-banner hidden">
+            <span id="input-status-text"></span>
+            <a id="hitl-link" class="hitl-link hidden" target="_blank" rel="noopener noreferrer">Open HITL Approval Console &rarr;</a>
+          </div>
+          <form id="chat-form" class="chat-form">
+            <textarea
+              id="chat-input"
+              class="chat-input"
+              rows="1"
+              maxlength="2000"
+              placeholder="Ask the agent a question about this investigation (Enter to send, Shift+Enter for new line)..."
+            ></textarea>
+            <button id="chat-send-btn" type="submit" class="chat-send-btn">Send</button>
+          </form>
+        </footer>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

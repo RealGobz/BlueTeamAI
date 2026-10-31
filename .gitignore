@@ -1,0 +1,88 @@
+# ==============================================================================
+# BlueTeamAI .gitignore
+# ==============================================================================
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+# Python compilation & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# BlueTeamAI local caches & runtime databases
+tools/db/*.db
+tools/db/*.db-journal
+tools/db/*.db-wal
+tools/db/*.sqlite
+tools/db/*.sqlite-journal
+tools/db/*.sqlite-wal
+tools/db/*.jsonl
+tools/db/current_scenario.txt
+
+# Keep directory structure & conclusion run table
+!tools/db/.gitkeep
+!tools/db/conclusion_run.csv
+
+# Cache & memory directories
+tools/cache/*
+!tools/cache/.gitkeep
+tools/memory/*
+!tools/memory/.gitkeep
+
+# Quarantine directory
+quarantine/*
+!quarantine/.gitkeep
+*.quarantine
+
+# Microsoft Sysmon binaries (downloaded by setup)
+tools/sysmon/*.exe
+tools/sysmon/*.zip
+tools/sysmon/*.txt
+!tools/sysmon/.gitkeep
+!tools/sysmon/sysmonconfig-export.xml
+
+# Temporary logs & scratch
+*.log
+scratch/*
+!scratch/.gitkeep
+sigma_master.zip
+
+# Personal developer notes
+my planning
+
+# OS & IDE metadata
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+ehthumbs.db
+[Bb]ackup/
