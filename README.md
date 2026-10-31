@@ -73,22 +73,26 @@ git clone https://github.com/RealGobz/BlueTeamAI.git
 cd BlueTeamAI
 ```
 
-### 2. Run Setup
-Run `setup.ps1` in an **Administrator PowerShell** (or `setup.sh` in Git Bash):
+### 2. Run All-In-One Setup & Start Watcher
+Run `setup.sh` in Git Bash (or `setup.ps1` in an **Administrator PowerShell**):
 ```powershell
-# In Administrator PowerShell:
-powershell -ExecutionPolicy Bypass -File .\setup.ps1
-
-# Or in Git Bash:
+# In Git Bash:
 bash setup.sh
+
+# Or with a scenario tag:
+bash setup.sh --scenario A1
+
+# Or in Administrator PowerShell:
+powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Scenario A1
 ```
-The setup script automatically:
-- Installs Python dependencies into `.venv`.
-- Sets up runtime directories (`tools/db`, `tools/cache`, `tools/memory`, `quarantine`).
+The script is 100% autonomous and executes everything in sequence:
+- Installs Python 3.12 & dependencies into `.venv`.
 - Downloads, installs, and starts Microsoft Sysmon with the SwiftOnSecurity configuration.
-- Populates 600+ Sigma detection rules and offline attack samples.
-- Prepares your `.env` configuration file from `.env.example`.
-- Runs a self-test to verify all imports and rules.
+- Downloads 600+ Sigma detection rules and offline attack samples.
+- **Checks/Installs Azure CLI** (`az`) and prompts `az login` if not already authenticated (required by `DefaultAzureCredential`).
+- Auto-discovers and configures your `PROJECT_ENDPOINT` in `.env`.
+- **Directly starts the live watcher (`detection/watch.py`) and Web UI (`http://127.0.0.1:8766`)**!
+*(To only run setup without starting the watcher immediately, pass `--no-watch` or `-NoWatch`).*
 
 ### 3. Configure Credentials (`.env`)
 Copy `.env.example` to `.env` if not already created, and configure your Azure AI Foundry endpoint:

@@ -1,5 +1,5 @@
 # ==============================================================================
-# setup.ps1 - BlueTeamAI Setup & Provisioning Script
+# setup.ps1 - BlueTeamAI Setup & Live Runner Script
 # ==============================================================================
 # Prepares the complete BlueTeamAI environment on Windows 10/11:
 # 1. Checks/Installs Python 3.10+ and prepares .venv virtual environment
@@ -9,15 +9,18 @@
 # 5. Downloads and installs Microsoft Sysmon with SwiftOnSecurity configuration
 # 6. Downloads sample attack logs in detection/test_data/
 # 7. Extracts 600+ Sigma detection rules into detection/rules/
-# 8. Prepares .env from .env.example
-# 9. Optionally provisions Azure AI Foundry infrastructure (setup/azure.bicep)
+# 8. Checks/Installs Azure CLI & authenticates for DefaultAzureCredential
+# 9. Prepares .env and auto-configures Azure AI Foundry endpoints
 # 10. Runs pre-flight verification
+# 11. Starts detection/watch.py and Web UI directly (pass -NoWatch to skip)
 # ==============================================================================
 
 [CmdletBinding()]
 param(
     [string]$ResourceGroupName = "rg-blueteamingai",
     [string]$AzureLocation     = "eastus",
+    [string]$Scenario          = "",
+    [switch]$NoWatch           = $false,
     [switch]$SkipAzure         = $true
 )
 
@@ -32,13 +35,13 @@ $TestDataDir = Join-Path $RootDir "detection\test_data"
 $RulesDir    = Join-Path $RootDir "detection\rules"
 
 Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host " BlueTeamAI: Windows Environment Setup" -ForegroundColor Cyan
+Write-Host " BlueTeamAI: Windows Setup & Live Runner" -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 
 # ------------------------------------------------------------------------------
 # SECTION 1: PYTHON & VIRTUAL ENVIRONMENT
 # ------------------------------------------------------------------------------
-Write-Host "`n[1/7] Checking Python virtual environment (.venv)..." -ForegroundColor Yellow
+Write-Host "`n[1/8] Checking Python virtual environment (.venv)..." -ForegroundColor Yellow
 
 $PythonCmd = Get-Command python.exe, py.exe, python3.exe -ErrorAction SilentlyContinue | Select-Object -First 1
 
@@ -79,7 +82,7 @@ Write-Host "      [OK] Python dependencies installed in .venv." -ForegroundColor
 # ------------------------------------------------------------------------------
 # SECTION 2: RUNTIME DIRECTORIES & CSV TEMPLATE
 # ------------------------------------------------------------------------------
-Write-Host "`n[2/7] Verifying directory structure and runtime storage..." -ForegroundColor Yellow
+Write-Host "`n[2/8] Verifying directory structure and runtime storage..." -ForegroundColor Yellow
 
 $RuntimeDirs = @(
     (Join-Path $RootDir "tools\db"),
@@ -114,7 +117,7 @@ if (-not (Test-Path $CsvFile) -or (Get-Item $CsvFile).Length -eq 0) {
 # ------------------------------------------------------------------------------
 # SECTION 3: MICROSOFT SYSMON SETUP
 # ------------------------------------------------------------------------------
-Write-Host "`n[3/7] Checking Microsoft Sysmon configuration & service..." -ForegroundColor Yellow
+Write-Host "`n[3/8] Checking Microsoft Sysmon configuration & service..." -ForegroundColor Yellow
 
 $SysmonExePath = Join-Path $ToolsDir "Sysmon64.exe"
 $SysmonConfigPath = Join-Path $ToolsDir "sysmonconfig-export.xml"
@@ -164,7 +167,7 @@ if ($SysmonService) {
 # ------------------------------------------------------------------------------
 # SECTION 4: SAMPLE ATTACK LOGS (OFFLINE REPLAY)
 # ------------------------------------------------------------------------------
-Write-Host "`n[4/7] Checking sample attack logs in detection/test_data/..." -ForegroundColor Yellow
+Write-Host "`n[4/8] Checking sample attack logs in detection/test_data/..." -ForegroundColor Yellow
 
 $Samples = @(
     @{
@@ -195,7 +198,7 @@ foreach ($Sample in $Samples) {
 # ------------------------------------------------------------------------------
 # SECTION 5: SIGMA DETECTION RULES
 # ------------------------------------------------------------------------------
-Write-Host "`n[5/7] Checking Sigma detection rules database..." -ForegroundColor Yellow
+Write-Host "`n[5/8] Checking Sigma detection rules database..." -ForegroundColor Yellow
 
 $ExistingRulesCount = (Get-ChildItem -Path $RulesDir -Filter *.yml -ErrorAction SilentlyContinue).Count
 if ($ExistingRulesCount -lt 50) {
@@ -215,9 +218,61 @@ if ($ExistingRulesCount -lt 50) {
 }
 
 # ------------------------------------------------------------------------------
-# SECTION 6: ENVIRONMENT VARIABLES & AZURE AI FOUNDRY
+# SECTION 6: AZURE CLI FOR DefaultAzureCredential
 # ------------------------------------------------------------------------------
-Write-Host "`n[6/7] Checking environment configuration (.env)..." -ForegroundColor Yellow
+Write-Host "`n[6/8] Checking Azure CLI (az) for DefaultAzureCredential..." -ForegroundColor Yellow
+
+$AzCmd = Get-Command az.cmd, az.exe, az.ps1 -ErrorAction SilentlyContinue | Select-Object -First 1
+
+if (-not $AzCmd) {
+    # Check default installation paths
+    $StandardAzPaths = @(
+        "C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.cmd",
+        "C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin\az.cmd"
+    )
+    foreach ($p in $StandardAzPaths) {
+        if (Test-Path $p) {
+            $env:Path = [System.IO.Path]::GetDirectoryName($p) + ";" + $env:Path
+            $AzCmd = Get-Command az.cmd, az.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+            break
+        }
+    }
+}
+
+if (-not $AzCmd) {
+    Write-Host "      [!] Azure CLI not found in PATH. Installing Azure CLI..." -ForegroundColor Yellow
+    $WingetCmd = Get-Command winget.exe -ErrorAction SilentlyContinue
+    if ($WingetCmd) {
+        winget install -e --id Microsoft.AzureCLI --accept-package-agreements --accept-source-agreements
+    } else {
+        Start-Process msiexec.exe -ArgumentList "/i https://aka.ms/installazurecliwindows /quiet /qn /norestart" -Wait
+    }
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+    $AzCmd = Get-Command az.cmd, az.exe, az.ps1 -ErrorAction SilentlyContinue | Select-Object -First 1
+}
+
+$AzAuthenticated = $false
+if ($AzCmd) {
+    $AccountJson = az account show --output json 2>$null
+    if (-not $AccountJson) {
+        Write-Host "      [!] Azure CLI is not authenticated. DefaultAzureCredential requires login." -ForegroundColor Yellow
+        Write-Host "          Launching 'az login'..." -ForegroundColor Cyan
+        az login --output table
+        $AccountJson = az account show --output json 2>$null
+    }
+    if ($AccountJson) {
+        $AccountObj = $AccountJson | ConvertFrom-Json
+        Write-Host "      [OK] Azure CLI authenticated as: $($AccountObj.user.name)" -ForegroundColor Green
+        $AzAuthenticated = $true
+    }
+} else {
+    Write-Host "      [NOTE] Azure CLI installed. If not active in this window, reopen PowerShell." -ForegroundColor Yellow
+}
+
+# ------------------------------------------------------------------------------
+# SECTION 7: ENVIRONMENT VARIABLES & ENDPOINTS (.env)
+# ------------------------------------------------------------------------------
+Write-Host "`n[7/8] Checking environment configuration (.env)..." -ForegroundColor Yellow
 
 $EnvFile = Join-Path $RootDir ".env"
 $EnvExample = Join-Path $RootDir ".env.example"
@@ -226,99 +281,87 @@ if (-not (Test-Path $EnvFile)) {
     if (Test-Path $EnvExample) {
         Copy-Item -Path $EnvExample -Destination $EnvFile
         Write-Host "      [OK] Created .env from .env.example" -ForegroundColor Green
-        Write-Host "      [!] Please edit .env with your PROJECT_ENDPOINT and API keys." -ForegroundColor Yellow
     }
 } else {
     Write-Host "      [OK] Existing .env file found." -ForegroundColor Green
 }
 
-if (-not $SkipAzure) {
-    Write-Host "      Checking Azure CLI for AI Foundry provisioning..." -ForegroundColor Gray
-    $AzCmd = Get-Command az -ErrorAction SilentlyContinue
-    if ($AzCmd) {
-        $AccountJson = az account show --output json 2>$null
-        if ($AccountJson) {
-            $AccountObj = $AccountJson | ConvertFrom-Json
-            Write-Host "      [OK] Azure account authenticated: $($AccountObj.user.name)" -ForegroundColor Green
+# Auto-discover Azure AI Foundry endpoint if missing or placeholder
+if (Test-Path $EnvFile) {
+    $EnvContent = Get-Content $EnvFile
+    $EndpointLine = $EnvContent | Where-Object { $_ -match "^PROJECT_ENDPOINT=(.*)$" }
+    $CurrentEndpoint = if ($EndpointLine -match "^PROJECT_ENDPOINT=(.*)$") { $matches[1].Trim() } else { "" }
 
-            $RgExists = az group exists --name $ResourceGroupName
-            if ($RgExists -ne "true") {
-                az group create --name $ResourceGroupName --location $AzureLocation --output none
-                Write-Host "      [OK] Created Resource Group: $ResourceGroupName ($AzureLocation)" -ForegroundColor Green
-            }
-
-            # Check for soft-deleted Cognitive Services accounts with btai- prefix and purge
-            $DeletedAccounts = az cognitiveservices account list-deleted --output json 2>$null | ConvertFrom-Json
-            if ($DeletedAccounts) {
-                foreach ($delAcc in $DeletedAccounts) {
-                    if ($delAcc.name -like "btai-*-aiservices" -and $delAcc.location -eq $AzureLocation) {
-                        Write-Host "      [!] Purging soft-deleted account '$($delAcc.name)'..." -ForegroundColor Yellow
-                        az cognitiveservices account purge --location $AzureLocation --resource-group $ResourceGroupName --name $delAcc.name --output none 2>$null
-                    }
+    if ((-not $CurrentEndpoint -or $CurrentEndpoint -like "*your-hub*") -and $AzAuthenticated) {
+        Write-Host "      Auto-discovering Azure AI Foundry resources in subscription..." -ForegroundColor Gray
+        $FoundAccount = az cognitiveservices account list --query "[?contains(name, 'btai-')].name | [0]" -o tsv 2>$null
+        if ($FoundAccount -and $FoundAccount -ne "None") {
+            $BaseName = $FoundAccount.Replace("-aiservices", "")
+            $AutoEndpoint = "https://$FoundAccount.services.ai.azure.com/api/projects/$BaseName-project"
+            
+            $NewLines = @()
+            foreach ($line in $EnvContent) {
+                if ($line -match "^PROJECT_ENDPOINT=") {
+                    $NewLines += "PROJECT_ENDPOINT=$AutoEndpoint"
+                } elseif ($line -match "^LLM_DEPLOYMENT_NAME=") {
+                    $NewLines += "LLM_DEPLOYMENT_NAME=agent_llm"
+                } else {
+                    $NewLines += $line
                 }
             }
+            $NewLines | Set-Content -Path $EnvFile -Encoding utf8
+            Write-Host "      [OK] Automatically configured PROJECT_ENDPOINT=$AutoEndpoint" -ForegroundColor Green
+        }
+    }
+}
 
-            $BicepPath = Join-Path $PSScriptRoot "azure.bicep"
-            if (Test-Path $BicepPath) {
-                Write-Host "      Deploying Bicep template: $BicepPath..." -ForegroundColor Yellow
-                $DeployName = "btai-deploy-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-                $prevEap = $ErrorActionPreference
-                $ErrorActionPreference = "Continue"
-                try {
-                    $DeployResultRaw = az deployment group create `
-                        --resource-group $ResourceGroupName `
-                        --template-file $BicepPath `
-                        --name $DeployName `
-                        --query "properties.outputs" `
-                        --output json 2>&1
-                } finally {
-                    $ErrorActionPreference = $prevEap
-                }
+# Optional explicit Bicep deployment
+if (-not $SkipAzure -and $AzAuthenticated) {
+    $RgExists = az group exists --name $ResourceGroupName
+    if ($RgExists -ne "true") {
+        az group create --name $ResourceGroupName --location $AzureLocation --output none
+        Write-Host "      [OK] Created Resource Group: $ResourceGroupName ($AzureLocation)" -ForegroundColor Green
+    }
 
-                if ($LASTEXITCODE -eq 0) {
-                    $Outputs = $DeployResultRaw | ConvertFrom-Json
-                    $ProjectEndpoint = $Outputs.PROJECT_ENDPOINT.value
-                    $LlmDeploymentName = $Outputs.LLM_DEPLOYMENT_NAME.value
-
-                    Write-Host "      [OK] Azure AI Foundry deployment completed!" -ForegroundColor Green
-
-                    # Update .env
-                    $ExistingEnv = @{}
-                    if (Test-Path $EnvFile) {
-                        Get-Content $EnvFile | ForEach-Object {
-                            $line = $_.Trim()
-                            if ($line -and -not $line.StartsWith("#") -and $line.Contains("=")) {
-                                $idx = $line.IndexOf("=")
-                                $k = $line.Substring(0, $idx).Trim()
-                                $v = $line.Substring($idx + 1).Trim()
-                                $ExistingEnv[$k] = $v
-                            }
-                        }
-                    }
-                    $ExistingEnv["PROJECT_ENDPOINT"] = $ProjectEndpoint
-                    $ExistingEnv["LLM_DEPLOYMENT_NAME"] = $LlmDeploymentName
-
-                    $EnvLines = @(
-                        "# ==============================================================================",
-                        "# BlueTeamAI Environment Variables",
-                        "# Automatically configured by setup/setup.ps1",
-                        "# =============================================================================="
-                    )
-                    foreach ($key in $ExistingEnv.Keys) {
-                        $EnvLines += "$key=$($ExistingEnv[$key])"
-                    }
-                    $EnvLines | Set-Content -Path $EnvFile -Encoding utf8
-                    Write-Host "      [OK] Updated $EnvFile with Azure endpoints." -ForegroundColor Green
-                }
+    # Soft-deleted Cognitive Services auto-purge
+    $DeletedAccounts = az cognitiveservices account list-deleted --output json 2>$null | ConvertFrom-Json
+    if ($DeletedAccounts) {
+        foreach ($delAcc in $DeletedAccounts) {
+            if ($delAcc.name -like "btai-*-aiservices" -and $delAcc.location -eq $AzureLocation) {
+                Write-Host "      [!] Purging soft-deleted account '$($delAcc.name)'..." -ForegroundColor Yellow
+                az cognitiveservices account purge --location $AzureLocation --resource-group $ResourceGroupName --name $delAcc.name --output none 2>$null
             }
+        }
+    }
+
+    $BicepPath = Join-Path $PSScriptRoot "azure.bicep"
+    if (Test-Path $BicepPath) {
+        Write-Host "      Deploying Bicep template: $BicepPath..." -ForegroundColor Yellow
+        $DeployName = "btai-deploy-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $DeployResultRaw = az deployment group create `
+                --resource-group $ResourceGroupName `
+                --template-file $BicepPath `
+                --name $DeployName `
+                --query "properties.outputs" `
+                --output json 2>&1
+        } finally {
+            $ErrorActionPreference = $prevEap
+        }
+
+        if ($LASTEXITCODE -eq 0) {
+            $Outputs = $DeployResultRaw | ConvertFrom-Json
+            Write-Host "      [OK] Azure AI Foundry deployment completed!" -ForegroundColor Green
         }
     }
 }
 
 # ------------------------------------------------------------------------------
-# SECTION 7: VALIDATION & SUMMARY
+# SECTION 8: PRE-FLIGHT VERIFICATION
 # ------------------------------------------------------------------------------
-Write-Host "`n[7/7] Running pre-flight self-test..." -ForegroundColor Yellow
+Write-Host "`n[8/8] Running pre-flight self-test..." -ForegroundColor Yellow
 
 try {
     & $VenvPython -c "
@@ -331,18 +374,31 @@ print(f'      [+] Self-test passed: loaded {len(rules)} Sigma rules successfully
     Write-Host "      [!] Pre-flight verification completed." -ForegroundColor Gray
 }
 
+# ------------------------------------------------------------------------------
+# START LIVE LISTENER & WEB UI DIRECTLY
+# ------------------------------------------------------------------------------
+if ($NoWatch) {
+    Write-Host "`n==========================================================" -ForegroundColor Cyan
+    Write-Host " Setup complete! (-NoWatch specified, watcher not started)." -ForegroundColor Green
+    Write-Host " To start manually: .\.venv\Scripts\python detection/watch.py" -ForegroundColor Cyan
+    Write-Host "==========================================================" -ForegroundColor Cyan
+    exit 0
+}
+
 Write-Host "`n==========================================================" -ForegroundColor Cyan
-Write-Host " Setup complete! Ready for listening & investigations." -ForegroundColor Green
+Write-Host " Starting BlueTeamAI Live Watcher (detection/watch.py)..." -ForegroundColor Green
+Write-Host " Investigation Web UI active at: http://127.0.0.1:8766" -ForegroundColor Cyan
+Write-Host " (Press Ctrl+C to stop listening)" -ForegroundColor DarkGray
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "1. Start Live Sysmon Watcher (Admin prompt recommended):" -ForegroundColor Yellow
-Write-Host "   .\.venv\Scripts\python detection/watch.py" -ForegroundColor Cyan
-Write-Host "   (Or tag a scenario: .\.venv\Scripts\python detection/watch.py --scenario A1)" -ForegroundColor DarkGray
-Write-Host ""
-Write-Host "2. Start Investigation Web UI:" -ForegroundColor Yellow
-Write-Host "   .\.venv\Scripts\python -m UI.main.server" -ForegroundColor Cyan
-Write-Host "   Open: http://127.0.0.1:8766" -ForegroundColor DarkGray
-Write-Host ""
-Write-Host "3. View Evaluated Scenario Runs:" -ForegroundColor Yellow
-Write-Host "   .\.venv\Scripts\python record_run.py --view" -ForegroundColor Cyan
-Write-Host "==========================================================" -ForegroundColor Cyan
+
+$WatchScript = Join-Path $RootDir "detection\watch.py"
+$WatchArgs = @()
+if ($Scenario) {
+    $WatchArgs += "--scenario", $Scenario
+}
+if ($args) {
+    $WatchArgs += $args
+}
+
+& $VenvPython $WatchScript @WatchArgs

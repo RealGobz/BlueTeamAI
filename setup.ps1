@@ -1,21 +1,21 @@
 # ==============================================================================
-# setup.ps1 - BlueTeamAI PowerShell Setup Script
+# setup.ps1 - BlueTeamAI PowerShell Setup & Runner Entry Point
 # ==============================================================================
-[CmdletBinding()]
+[CmdletBinding(PositionalBinding=$false)]
 param(
-    [switch]$SkipAzure = $true
+    [string]$Scenario   = "",
+    [switch]$NoWatch    = $false,
+    [switch]$SkipAzure  = $true
 )
 
 $RootDir = $PSScriptRoot
 $SetupScript = Join-Path $RootDir "setup\setup.ps1"
 
 if (Test-Path $SetupScript) {
-    if ($SkipAzure) {
-        & $SetupScript -SkipAzure
-    } else {
-        & $SetupScript
-    }
+    & $SetupScript -Scenario $Scenario -NoWatch:$NoWatch -SkipAzure:$SkipAzure @args
 } else {
-    Write-Host "Running setup.sh via bash..." -ForegroundColor Yellow
-    bash (Join-Path $RootDir "setup.sh")
+    $BashArgs = @()
+    if ($NoWatch) { $BashArgs += "--no-watch" }
+    if ($Scenario) { $BashArgs += "--scenario", $Scenario }
+    bash (Join-Path $RootDir "setup.sh") @BashArgs @args
 }

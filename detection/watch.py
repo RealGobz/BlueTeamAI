@@ -195,17 +195,20 @@ if __name__ == "__main__":
         except Exception:
             pass
 
+    # Ensure background Web UI and HITL servers are running
+    try:
+        from UI.HITL.server import start_server_in_background
+        start_server_in_background()
+    except Exception:
+        pass
+    try:
+        from UI.main.server import start_server_in_background as start_main_ui
+        start_main_ui()
+        print("[*] Investigation Web UI active at: http://127.0.0.1:8766")
+    except Exception:
+        pass
+
     if args.file:
-        try:
-            from UI.HITL.server import start_server_in_background
-            start_server_in_background()
-        except Exception:
-            pass
-        try:
-            from UI.main.server import start_server_in_background as start_main_ui
-            start_main_ui()
-        except Exception:
-            pass
         print(f"[*] Scanning file: {args.file}")
         for event in read_evtx(args.file):
             pipeline(event)
