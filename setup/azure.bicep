@@ -40,19 +40,19 @@ param projectName string = '${baseName}-project'
 param deploymentName string = 'agent_llm'
 
 @description('Model identifier in the Azure AI model catalog.')
-param modelName string = 'gpt-4o'
+param modelName string = 'gpt-5.6-sol'
 
 @description('Format provider for the model.')
 param modelFormat string = 'OpenAI'
 
 @description('Version of the Claude Sonnet / GPT model.')
-param modelVersion string = '2024-11-20'
+param modelVersion string = '2026-07-09'
 
 @description('SKU name for the model deployment (GlobalStandard or Standard).')
 param skuName string = 'GlobalStandard'
 
 @description('Capacity allocated to the model deployment (in thousands of TPM).')
-param capacity int = 10
+param capacity int = 20
 
 // --- Partner Terms & EULA Acceptance Attestation ---
 

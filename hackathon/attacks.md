@@ -17,7 +17,7 @@ This directory contains harmless simulation scripts for evaluating BlueTeamAI in
 ### How to Run:
 In the VM, while `watch.py` is running:
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\hackathon\simulate_A1.ps1
+powershell -ExecutionPolicy Bypass -File .\hackathon\runs\run_A1\simulate_A1.ps1
 ```
 
 Or run manually in PowerShell:

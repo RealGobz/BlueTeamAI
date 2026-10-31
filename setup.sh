@@ -303,9 +303,17 @@ if [ -f ".env" ] && command -v az >/dev/null 2>&1 && [ -n "$AZ_USER" ]; then
         if [ -n "$FOUND_ACCOUNT" ] && [ "$FOUND_ACCOUNT" != "None" ]; then
             BASE_NAME="${FOUND_ACCOUNT%-aiservices}"
             AUTO_ENDPOINT="https://${FOUND_ACCOUNT}.services.ai.azure.com/api/projects/${BASE_NAME}-project"
+            FOUND_KEY=$(az cognitiveservices account keys list --name "$FOUND_ACCOUNT" --query "key1" -o tsv 2>/dev/null || echo "")
             sed -i "s|^PROJECT_ENDPOINT=.*|PROJECT_ENDPOINT=${AUTO_ENDPOINT}|" .env
             sed -i "s|^LLM_DEPLOYMENT_NAME=.*|LLM_DEPLOYMENT_NAME=agent_llm|" .env
-            echo "      [OK] Automatically configured PROJECT_ENDPOINT=$AUTO_ENDPOINT"
+            if [ -n "$FOUND_KEY" ]; then
+                if grep -q "^AZURE_AI_KEY=" .env; then
+                    sed -i "s|^AZURE_AI_KEY=.*|AZURE_AI_KEY=${FOUND_KEY}|" .env
+                else
+                    echo "AZURE_AI_KEY=${FOUND_KEY}" >> .env
+                fi
+            fi
+            echo "      [OK] Automatically configured PROJECT_ENDPOINT and AZURE_AI_KEY"
         fi
     fi
 fi

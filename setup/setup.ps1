@@ -298,19 +298,27 @@ if (Test-Path $EnvFile) {
         if ($FoundAccount -and $FoundAccount -ne "None") {
             $BaseName = $FoundAccount.Replace("-aiservices", "")
             $AutoEndpoint = "https://$FoundAccount.services.ai.azure.com/api/projects/$BaseName-project"
+            $FoundKey = az cognitiveservices account keys list --name $FoundAccount --query "key1" -o tsv 2>$null
             
             $NewLines = @()
+            $HasKey = $false
             foreach ($line in $EnvContent) {
                 if ($line -match "^PROJECT_ENDPOINT=") {
                     $NewLines += "PROJECT_ENDPOINT=$AutoEndpoint"
                 } elseif ($line -match "^LLM_DEPLOYMENT_NAME=") {
                     $NewLines += "LLM_DEPLOYMENT_NAME=agent_llm"
+                } elseif ($line -match "^AZURE_AI_KEY=") {
+                    $NewLines += "AZURE_AI_KEY=$FoundKey"
+                    $HasKey = $true
                 } else {
                     $NewLines += $line
                 }
             }
+            if (-not $HasKey -and $FoundKey) {
+                $NewLines += "AZURE_AI_KEY=$FoundKey"
+            }
             $NewLines | Set-Content -Path $EnvFile -Encoding utf8
-            Write-Host "      [OK] Automatically configured PROJECT_ENDPOINT=$AutoEndpoint" -ForegroundColor Green
+            Write-Host "      [OK] Automatically configured PROJECT_ENDPOINT and AZURE_AI_KEY" -ForegroundColor Green
         }
     }
 }

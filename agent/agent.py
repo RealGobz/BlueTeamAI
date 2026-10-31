@@ -63,13 +63,25 @@ from agent.verdict import process_verdict_submission
 
 
 PROJECT_ENDPOINT = os.getenv("PROJECT_ENDPOINT")
-LLM_DEPLOYMENT_NAME = os.getenv("LLM_DEPLOYMENT_NAME")
+LLM_DEPLOYMENT_NAME = os.getenv("LLM_DEPLOYMENT_NAME", "agent_llm")
 PROJECT_LOCATION = os.getenv("PROJECT_LOCATION")
-credential = DefaultAzureCredential()
+AZURE_API_KEY = os.getenv("AZURE_OPENAI_API_KEY") or os.getenv("AZURE_AI_KEY") or os.getenv("PROJECT_KEY")
+
+if AZURE_API_KEY:
+    from azure.core.credentials import AzureKeyCredential
+    credential = AzureKeyCredential(AZURE_API_KEY)
+else:
+    credential = DefaultAzureCredential()
 
 endpoint = PROJECT_ENDPOINT
-if endpoint and "/api/projects/" in endpoint:
-    endpoint = endpoint.split("/api/projects/")[0] + "/openai/v1"
+if endpoint:
+    if "/api/projects/" in endpoint:
+        endpoint = endpoint.split("/api/projects/")[0]
+        if ".services.ai.azure.com" in endpoint:
+            endpoint = endpoint.replace(".services.ai.azure.com", ".cognitiveservices.azure.com")
+        endpoint = endpoint.rstrip("/") + "/openai/v1"
+    elif not endpoint.endswith("/openai/v1"):
+        endpoint = endpoint.rstrip("/") + "/openai/v1"
 
 llm = AzureAIChatCompletionsModel(
     endpoint=endpoint,
