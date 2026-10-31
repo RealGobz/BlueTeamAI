@@ -51,36 +51,44 @@ BlueTeamAI is an autonomous, agentic cybersecurity analyst designed to investiga
 
 ## 📋 Prerequisites
 
-1. **Operating System**: Windows 10, Windows 11, or Windows Server (or Windows inside a VM such as VMware/VirtualBox).
-2. **Permissions**: Administrator privileges (required to listen to the live Sysmon event channel).
-3. **Python**: Python 3.10 or higher.
-4. **Azure AI Foundry Account**: An Azure subscription with access to Azure AI Foundry (Claude 3.5 Sonnet or GPT-4o).
+1. **Operating System**: Windows 10, Windows 11, or Windows Server (or a Windows VM in VMware, VirtualBox, or Hyper-V).
+2. **Permissions**: Administrator privileges (required to install Sysmon and listen to the live Sysmon event channel).
+3. **Python & Git**: Python 3.10+ and Git for Windows.
+4. **Azure AI Foundry Account**: An Azure subscription with an AI Foundry project (`agent_llm` deployment).
+
+> [!TIP]
+> **On a fresh, raw Windows 11 VM**, open PowerShell as Administrator and run:
+> ```powershell
+> winget install -e --id Git.Git Python.Python.3.12 --accept-package-agreements --accept-source-agreements
+> ```
+> Restart PowerShell to refresh your PATH, and you're ready to clone!
 
 ---
 
 ## ⚡ Quick Start
 
 ### 1. Clone the Repository
-```bash
+```powershell
 git clone https://github.com/RealGobz/BlueTeamAI.git
 cd BlueTeamAI
 ```
 
 ### 2. Run Setup
-Run `setup.sh` in Git Bash (or `setup.ps1` in PowerShell):
-```bash
-# In Git Bash:
-bash setup.sh
+Run `setup.ps1` in an **Administrator PowerShell** (or `setup.sh` in Git Bash):
+```powershell
+# In Administrator PowerShell:
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
 
-# Or in an Administrator PowerShell:
-.\setup.ps1
+# Or in Git Bash:
+bash setup.sh
 ```
 The setup script automatically:
-- Creates the `.venv` virtual environment and installs all dependencies.
+- Installs Python dependencies into `.venv`.
 - Sets up runtime directories (`tools/db`, `tools/cache`, `tools/memory`, `quarantine`).
-- Downloads and starts Microsoft Sysmon with SwiftOnSecurity configuration.
-- Verifies 600+ Sigma detection rules and sample attack logs.
-- Prepares your `.env` configuration file.
+- Downloads, installs, and starts Microsoft Sysmon with the SwiftOnSecurity configuration.
+- Populates 600+ Sigma detection rules and offline attack samples.
+- Prepares your `.env` configuration file from `.env.example`.
+- Runs a self-test to verify all imports and rules.
 
 ### 3. Configure Credentials (`.env`)
 Copy `.env.example` to `.env` if not already created, and configure your Azure AI Foundry endpoint:
