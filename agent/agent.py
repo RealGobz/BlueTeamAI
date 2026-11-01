@@ -67,25 +67,6 @@ LLM_DEPLOYMENT_NAME = os.getenv("LLM_DEPLOYMENT_NAME", "agent_llm")
 PROJECT_LOCATION = os.getenv("PROJECT_LOCATION")
 AZURE_API_KEY = os.getenv("AZURE_OPENAI_API_KEY") or os.getenv("AZURE_AI_KEY") or os.getenv("PROJECT_KEY")
 
-if not AZURE_API_KEY:
-    # Resilient fallback: parse .env manually in case '=' was omitted (e.g. AZURE_AI_KEY<key>)
-    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
-    if os.path.exists(env_path):
-        try:
-            with open(env_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    for prefix in ("AZURE_OPENAI_API_KEY", "AZURE_AI_KEY", "PROJECT_KEY"):
-                        if line.startswith(prefix):
-                            val = line[len(prefix):].lstrip(": =").strip().strip("'\"")
-                            if val:
-                                AZURE_API_KEY = val
-                                break
-                    if AZURE_API_KEY:
-                        break
-        except Exception:
-            pass
-
 if AZURE_API_KEY:
     from azure.core.credentials import AzureKeyCredential
     credential = AzureKeyCredential(AZURE_API_KEY)
@@ -127,6 +108,8 @@ class AgentState(MessagesState):
 
 #nodes
 
+import time
+
 def agent_node(state: AgentState):
     if not state["messages"]:
         plan_val = state.get("plan")
@@ -137,7 +120,17 @@ def agent_node(state: AgentState):
         )
         state["messages"].append(SystemMessage(content=prompt))
     
-    response = agent.invoke(state["messages"])
+    for attempt in range(4):
+        try:
+            response = agent.invoke(state["messages"])
+            break
+        except Exception as e:
+            err_str = str(e)
+            if ("429" in err_str or "RateLimit" in type(e).__name__ or "rate limit" in err_str.lower()) and attempt < 3:
+                wait_time = (attempt + 1) * 3
+                time.sleep(wait_time)
+            else:
+                raise
     return {"messages": [response]}
 
 def classify_tools_router(state: AgentState):
