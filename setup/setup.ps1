@@ -332,17 +332,28 @@ if ($SkipAzure) {
     }
 
     if ($AzCmd) {
-        $AccountJson = az account show --output json 2>$null
-        if (-not $AccountJson) {
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $AccountJson = (cmd.exe /c "az account show --output json 2>nul") | Out-String
+        $ErrorActionPreference = $prevEap
+
+        if (-not $AccountJson -or -not ($AccountJson.Trim())) {
             Write-Host "      [!] Azure CLI is not authenticated. DefaultAzureCredential requires login." -ForegroundColor Yellow
             Write-Host "          Launching 'az login'..." -ForegroundColor Cyan
+            $prevEap = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
             az login --output table
-            $AccountJson = az account show --output json 2>$null
+            $AccountJson = (cmd.exe /c "az account show --output json 2>nul") | Out-String
+            $ErrorActionPreference = $prevEap
         }
-        if ($AccountJson) {
-            $AccountObj = $AccountJson | ConvertFrom-Json
-            Write-Host "      [OK] Azure CLI authenticated as: $($AccountObj.user.name)" -ForegroundColor Green
-            $AzAuthenticated = $true
+        if ($AccountJson -and ($AccountJson.Trim())) {
+            try {
+                $AccountObj = $AccountJson | ConvertFrom-Json
+                if ($AccountObj.user.name) {
+                    Write-Host "      [OK] Azure CLI authenticated as: $($AccountObj.user.name)" -ForegroundColor Green
+                    $AzAuthenticated = $true
+                }
+            } catch {}
         }
     } else {
         Write-Host "      [NOTE] Azure CLI installed. If not active in this window, reopen PowerShell." -ForegroundColor Yellow
@@ -374,11 +385,16 @@ if (Test-Path $EnvFile) {
 
     if ((-not $CurrentEndpoint -or $CurrentEndpoint -like "*your-hub*") -and $AzAuthenticated) {
         Write-Host "      Auto-discovering Azure AI Foundry resources in subscription..." -ForegroundColor Gray
-        $FoundAccount = az cognitiveservices account list --query "[?contains(name, 'btai-')].name | [0]" -o tsv 2>$null
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $FoundAccount = (cmd.exe /c 'az cognitiveservices account list --query "[?contains(name, ''btai-'')].name | [0]" -o tsv 2>nul') | Out-String
+        $FoundAccount = $FoundAccount.Trim()
         if ($FoundAccount -and $FoundAccount -ne "None") {
             $BaseName = $FoundAccount.Replace("-aiservices", "")
             $AutoEndpoint = "https://$FoundAccount.services.ai.azure.com/api/projects/$BaseName-project"
-            $FoundKey = az cognitiveservices account keys list --name $FoundAccount --query "key1" -o tsv 2>$null
+            $FoundKey = (cmd.exe /c "az cognitiveservices account keys list --name $FoundAccount --query `"key1`" -o tsv 2>nul") | Out-String
+            $FoundKey = $FoundKey.Trim()
+            $ErrorActionPreference = $prevEap
             
             $NewLines = @()
             $HasKey = $false
@@ -399,6 +415,8 @@ if (Test-Path $EnvFile) {
             }
             $NewLines | Set-Content -Path $EnvFile -Encoding utf8
             Write-Host "      [OK] Automatically configured PROJECT_ENDPOINT and AZURE_AI_KEY" -ForegroundColor Green
+        } else {
+            $ErrorActionPreference = $prevEap
         }
     }
 }
