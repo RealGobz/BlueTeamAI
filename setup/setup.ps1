@@ -131,9 +131,14 @@ if (-not (Test-Path $VenvPython)) {
     & $PythonBin -m venv $VenvDir
 }
 
-Write-Host "      Upgrading pip and installing requirements.txt..." -ForegroundColor Gray
-& $VenvPip install --upgrade pip --quiet
-& $VenvPip install -r (Join-Path $RootDir "requirements.txt") --quiet
+Write-Host "      Installing Python requirements..." -ForegroundColor Gray
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    & $VenvPip install --upgrade pip --quiet --disable-pip-version-check 2>$null
+} catch {}
+& $VenvPip install -r (Join-Path $RootDir "requirements.txt") --disable-pip-version-check --quiet
+$ErrorActionPreference = $prevEap
 Write-Host "      [OK] Python dependencies installed in .venv." -ForegroundColor Green
 
 # ------------------------------------------------------------------------------
