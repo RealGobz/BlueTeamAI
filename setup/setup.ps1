@@ -131,14 +131,17 @@ if (-not (Test-Path $VenvPython)) {
     & $PythonBin -m venv $VenvDir
 }
 
-Write-Host "      Installing Python requirements (downloading 50+ packages, please wait)..." -ForegroundColor Gray
-$prevEap = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-try {
-    & $VenvPip install --upgrade pip --quiet --disable-pip-version-check 2>$null
-} catch {}
-& $VenvPip install -r (Join-Path $RootDir "requirements.txt") --disable-pip-version-check --no-warn-script-location
-$ErrorActionPreference = $prevEap
+Write-Host "      Ensuring pip is up to date in .venv..." -ForegroundColor Gray
+& $VenvPython -m pip install --upgrade pip --disable-pip-version-check
+
+Write-Host "      Installing Python requirements from requirements.txt..." -ForegroundColor Gray
+& $VenvPython -m pip install -r (Join-Path $RootDir "requirements.txt") --disable-pip-version-check --no-warn-script-location
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "      [-] Error: Failed to install Python dependencies into .venv." -ForegroundColor Red
+    Write-Host "          Try running manually: .\.venv\Scripts\pip install -r requirements.txt" -ForegroundColor Yellow
+    exit 1
+}
 Write-Host "      [OK] Python dependencies installed in .venv." -ForegroundColor Green
 
 # ------------------------------------------------------------------------------
