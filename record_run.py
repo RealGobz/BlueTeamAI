@@ -136,9 +136,9 @@ def extract_tool_note(tool_name: str, args: dict, result_content: str) -> str:
 
     if tool_name == "get_file_info":
         if isinstance(res_obj, dict):
-            status = res_obj.get("status", "")
+            exists = res_obj.get("exists") if res_obj.get("exists") is not None else (res_obj.get("status") == "found")
             match = res_obj.get("hash_matches_alert")
-            return f"exists:{status == 'found'}, match:{match}"
+            return f"exists:{exists}, match:{match}"
         return "info checked"
 
     if tool_name == "get_file_signature":
@@ -545,7 +545,31 @@ def extract_run_data(
             actions_proposed_list.append(f"{tool} ({tgt})")
             human_decision_list.append(str(act.get("decision", "none")))
             action_result_list.append(str(act.get("status", "none")))
-    else:
+
+    if not actions_proposed_list:
+        # Fallback to inspecting message tool_calls directly
+        for m in messages:
+            tcs = getattr(m, "tool_calls", []) or []
+            for tc in tcs:
+                name = tc.get("name")
+                if name in ("quarantine_file", "kill_process"):
+                    args_tc = tc.get("args", {})
+                    tgt = args_tc.get("path") or args_tc.get("guid") or ""
+                    tc_id = tc.get("id")
+                    res_raw = tool_results_map.get(tc_id, "")
+                    status_val = "executed"
+                    if res_raw:
+                        try:
+                            res_json = json.loads(res_raw)
+                            status_val = res_json.get("status", "executed")
+                        except Exception:
+                            status_val = "executed"
+                    dec = "approved" if status_val in ("quarantined", "killed", "dry_run") else ("rejected" if "rejected" in status_val else "pending")
+                    actions_proposed_list.append(f"{name} ({tgt})")
+                    human_decision_list.append(dec)
+                    action_result_list.append(status_val)
+
+    if not actions_proposed_list:
         actions_proposed_list.append("none")
         human_decision_list.append("none")
         action_result_list.append("none")

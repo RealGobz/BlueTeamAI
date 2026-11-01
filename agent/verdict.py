@@ -139,7 +139,12 @@ def validate_verdict(
 
     # Determine revision context
     existing_revisions = get_verdicts_for_thread(thread_id, db_path=db_path)
-    current_revision = len(existing_revisions) + 1
+    # Only count completed verdicts as prior revisions that require change_from_previous
+    completed_revisions = [
+        r for r in existing_revisions
+        if r.get("status") == "closed" or (r.get("verdict") and r.get("status") != "incomplete")
+    ]
+    current_revision = len(completed_revisions) + 1
 
     # 1. Basic Enums
     verdict = str(args.get("verdict", "")).strip().lower()
@@ -311,47 +316,69 @@ def validate_verdict(
 
     # 8. Indicators hallucination check
     indicators_raw = args.get("indicators")
-    indicators_to_check = []
-    if isinstance(indicators_raw, dict):
-        for k, v in indicators_raw.items():
-            if isinstance(v, list):
-                for item in v:
-                    if isinstance(item, dict):
-                        val = item.get("value") or item.get("val") or item.get("indicator") or item.get("ioc")
-                        if val and isinstance(val, str) and val.strip():
-                            indicators_to_check.append(val.strip())
-                        else:
-                            for dv in item.values():
-                                if isinstance(dv, str) and dv.strip():
-                                    indicators_to_check.append(dv.strip())
-                    elif isinstance(item, str) and item.strip():
-                        indicators_to_check.append(item.strip())
-            elif isinstance(v, str) and v.strip():
-                indicators_to_check.append(v.strip())
-        sanitized["indicators"] = indicators_raw
-    elif isinstance(indicators_raw, list):
-        for item in indicators_raw:
-            if isinstance(item, dict):
-                val = item.get("value") or item.get("val") or item.get("indicator") or item.get("ioc")
-                if val and isinstance(val, str) and val.strip():
-                    indicators_to_check.append(val.strip())
-                else:
-                    for dv in item.values():
-                        if isinstance(dv, str) and dv.strip():
-                            indicators_to_check.append(dv.strip())
-            elif isinstance(item, str) and item.strip():
-                indicators_to_check.append(item.strip())
-        sanitized["indicators"] = indicators_raw
-    else:
-        sanitized["indicators"] = None
+    sanitized["indicators"] = indicators_raw if isinstance(indicators_raw, (dict, list)) else None
+
+    def _extract_ioc_values(raw: Any) -> list[str]:
+        vals = []
+        if isinstance(raw, dict):
+            for k in ("value", "val", "indicator", "ioc", "path", "file", "hash", "sha256", "registry_key"):
+                if k in raw and isinstance(raw[k], str) and raw[k].strip():
+                    vals.append(raw[k].strip())
+                    return vals
+            for v in raw.values():
+                vals.extend(_extract_ioc_values(v))
+        elif isinstance(raw, list):
+            for item in raw:
+                vals.extend(_extract_ioc_values(item))
+        elif isinstance(raw, str):
+            s = raw.strip()
+            if s:
+                if s.startswith("{") and ("'value'" in s or '"value"' in s or "'val'" in s or '"val"' in s):
+                    try:
+                        import ast
+                        parsed = ast.literal_eval(s)
+                        if isinstance(parsed, (dict, list)):
+                            return _extract_ioc_values(parsed)
+                    except Exception:
+                        pass
+                    try:
+                        parsed = json.loads(s)
+                        if isinstance(parsed, (dict, list)):
+                            return _extract_ioc_values(parsed)
+                    except Exception:
+                        pass
+                vals.append(s)
+        return vals
+
+    indicators_to_check = _extract_ioc_values(indicators_raw)
 
     if indicators_to_check:
-        corpus = json.dumps(alert, default=str).lower() + " " + json.dumps(sigma_rule, default=str).lower()
-        corpus += " " + " ".join(tool_results).lower()
+        def _norm_for_search(text: str) -> str:
+            if not text:
+                return ""
+            # Strip outer quotes, lowercase, and collapse multiple slashes/backslashes to a single forward slash
+            t = text.strip().strip("'\"").lower()
+            return re.sub(r"[\\/]+", "/", t)
+
+        corpus_items = [
+            json.dumps(alert, default=str),
+            json.dumps(sigma_rule, default=str),
+        ]
+        corpus_items.extend(tool_results)
+        # Also include tool call arguments and assistant contents from conversation messages
+        for m in messages:
+            tcs = getattr(m, "tool_calls", []) or []
+            for tc in tcs:
+                corpus_items.append(json.dumps(tc.get("args", {}), default=str))
+            content = getattr(m, "content", "")
+            if isinstance(content, str):
+                corpus_items.append(content)
+
+        norm_corpus = _norm_for_search(" ".join(corpus_items))
 
         for ind in indicators_to_check:
-            # Check if the indicator appears anywhere in the alert, sigma rule, or tool results
-            if ind.lower() not in corpus:
+            norm_ind = _norm_for_search(ind)
+            if norm_ind and norm_ind not in norm_corpus:
                 errors.append(
                     f"Hallucinated indicator detected: '{ind}' does not appear in the alert or in any tool results from this thread."
                 )

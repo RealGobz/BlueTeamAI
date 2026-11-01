@@ -509,7 +509,7 @@ def fetch_process_tree(
                 """
                 SELECT raw_data FROM events
                 WHERE event_id = 1
-                  AND (json_extract(raw_data, '$.ProcessGuid') = ? OR json_extract(raw_data, '$.ProcessGuid') = ?)
+                  AND (json_extract(raw_data, '$.ProcessGuid') = ? COLLATE NOCASE OR json_extract(raw_data, '$.ProcessGuid') = ? COLLATE NOCASE)
                 ORDER BY id DESC LIMIT 1
                 """,
                 (g_with_braces, g_without_braces),
@@ -572,7 +572,7 @@ def fetch_process_children(
                 """
                 SELECT raw_data FROM events
                 WHERE event_id = 1
-                  AND (json_extract(raw_data, '$.ParentProcessGuid') = ? OR json_extract(raw_data, '$.ParentProcessGuid') = ?)
+                  AND (json_extract(raw_data, '$.ParentProcessGuid') = ? COLLATE NOCASE OR json_extract(raw_data, '$.ParentProcessGuid') = ? COLLATE NOCASE)
                 ORDER BY id ASC
                 """,
                 (g_with_braces, g_without_braces),
@@ -646,14 +646,35 @@ def fetch_events_for_process(
 
     conn = sqlite3.connect(str(db_path))
     try:
-        cursor = conn.execute(
+        # Also discover direct child process GUIDs (e.g. reg.exe adding Run key)
+        child_cursor = conn.execute(
             """
+            SELECT json_extract(raw_data, '$.ProcessGuid') FROM events
+            WHERE event_id = 1
+              AND (json_extract(raw_data, '$.ParentProcessGuid') = ? COLLATE NOCASE
+                   OR json_extract(raw_data, '$.ParentProcessGuid') = ? COLLATE NOCASE)
+            """,
+            (g_with_braces, g_without_braces),
+        )
+        all_guids = {g_with_braces, g_without_braces}
+        for (cg,) in child_cursor.fetchall():
+            if cg:
+                c_clean = str(cg).strip()
+                all_guids.add(c_clean if c_clean.startswith("{") else f"{{{c_clean}}}")
+                all_guids.add(c_clean.strip("{}"))
+
+        placeholders = ", ".join(["?"] * len(all_guids))
+        guid_list = list(all_guids)
+
+        cursor = conn.execute(
+            f"""
             SELECT event_id, raw_data FROM events
-            WHERE (json_extract(raw_data, '$.ProcessGuid') = ? OR json_extract(raw_data, '$.ProcessGuid') = ?
-               OR json_extract(raw_data, '$.SourceProcessGuid') = ? OR json_extract(raw_data, '$.SourceProcessGuid') = ?)
+            WHERE (json_extract(raw_data, '$.ProcessGuid') IN ({placeholders}) COLLATE NOCASE
+               OR json_extract(raw_data, '$.SourceProcessGuid') IN ({placeholders}) COLLATE NOCASE
+               OR json_extract(raw_data, '$.process_guid') IN ({placeholders}) COLLATE NOCASE)
             ORDER BY id ASC
             """,
-            (g_with_braces, g_without_braces, g_with_braces, g_without_braces),
+            guid_list + guid_list + guid_list,
         )
 
         for eid, raw_str in cursor.fetchall():
@@ -753,12 +774,15 @@ def fetch_events_by_hash(
                    COUNT(DISTINCT parent_image)        AS distinct_parents,
                    GROUP_CONCAT(DISTINCT parent_image) AS parents
             FROM events
-            WHERE sha256 = ? AND event_id = 1
+            WHERE (sha256 = ? COLLATE NOCASE
+                   OR json_extract(raw_data, '$.Hashes') LIKE ?
+                   OR json_extract(raw_data, '$.sha256') = ? COLLATE NOCASE)
+              AND event_id = 1
             GROUP BY image
             ORDER BY runs DESC
             LIMIT ?
             """,
-            (sha256, limit),
+            (sha256, f"%SHA256={sha256}%", sha256, limit),
         ).fetchall()
 
         if not rows:
@@ -823,7 +847,10 @@ def validate_local_path(path: str) -> str:
     """Accept only local drive paths like C:\\... Reject network paths (\\\\server\\share)."""
     if not isinstance(path, str):
         raise ValueError("path rejected: path must be a string")
-    norm_path = path.replace("/", "\\")
+    clean_p = path.strip().strip("'\"")
+    # Convert forward slashes to backslashes and collapse multiple consecutive backslashes
+    norm_path = clean_p.replace("/", "\\")
+    norm_path = re.sub(r"\\+", r"\\", norm_path)
     if not re.match(r"^[A-Za-z]:\\", norm_path):
         raise ValueError("path rejected: only local drive paths are allowed")
     real = os.path.realpath(norm_path)  # resolves shortcuts/links
@@ -2282,6 +2309,20 @@ def terminate_process(
     """
     effective_dry_run = DRY_RUN if dry_run is None else dry_run
 
+    _orig_kill_log = globals()["log_audit_kill"]
+    def log_audit_kill(entry: dict, audit_path: Path | str = audit_path) -> None:
+        if thread_id and "thread_id" not in entry:
+            entry["thread_id"] = thread_id
+        if alert_id and ("alert_id" not in entry or entry["alert_id"] == "unknown"):
+            entry["alert_id"] = alert_id
+        elif alert_guid and ("alert_id" not in entry or entry["alert_id"] == "unknown"):
+            entry["alert_id"] = alert_guid
+        if alert_guid and "alert_guid" not in entry:
+            entry["alert_guid"] = alert_guid
+        if "target" not in entry:
+            entry["target"] = entry.get("target_guid") or entry.get("image")
+        _orig_kill_log(entry, audit_path=audit_path)
+
     # 1. Validate GUID format
     guid_str = str(guid).strip() if guid else ""
     guid_pattern = r"^\{?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}?$"
@@ -3260,6 +3301,22 @@ def quarantine_file_action(
     10. Write append-only audit log for EVERY attempt and outcome.
     """
     effective_dry_run = DRY_RUN if dry_run is None else dry_run
+
+    _orig_quarantine_log = globals()["log_audit_quarantine"]
+    def log_audit_quarantine(entry: dict, audit_path: Path | str = audit_path) -> None:
+        if thread_id and "thread_id" not in entry:
+            entry["thread_id"] = thread_id
+        if alert_id and ("alert_id" not in entry or entry["alert_id"] == "unknown"):
+            entry["alert_id"] = alert_id
+        elif alert_guid and ("alert_id" not in entry or entry["alert_id"] == "unknown"):
+            entry["alert_id"] = alert_guid
+        if alert_guid and "alert_guid" not in entry:
+            entry["alert_guid"] = alert_guid
+        if "target" not in entry:
+            entry["target"] = entry.get("target_path") or entry.get("original_path") or entry.get("path")
+        if "target_path" not in entry:
+            entry["target_path"] = entry.get("target") or entry.get("original_path")
+        _orig_quarantine_log(entry, audit_path=audit_path)
 
     # 1. Path format validation
     if not path or not isinstance(path, str):

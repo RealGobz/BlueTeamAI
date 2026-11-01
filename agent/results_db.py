@@ -499,7 +499,7 @@ def read_audit_actions_for_thread(
                             actions.append({
                                 "tool": "quarantine_file",
                                 "timestamp": entry.get("timestamp"),
-                                "target": entry.get("target_path") or entry.get("resolved_path"),
+                                "target": entry.get("target") or entry.get("target_path") or entry.get("resolved_path") or entry.get("original_path") or entry.get("path"),
                                 "reason": entry.get("reason"),
                                 "decision": "approved" if entry.get("approved") else "rejected",
                                 "result": entry.get("status"),
