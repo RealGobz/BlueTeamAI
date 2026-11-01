@@ -171,18 +171,20 @@ def extract_tool_note(tool_name: str, args: dict, result_content: str) -> str:
 
     if tool_name == "get_events_for_process":
         if isinstance(res_obj, dict):
-            events = res_obj.get("events", [])
-            return f"{len(events)} events"
+            tot_evts = sum(len(v) for v in res_obj.values() if isinstance(v, list))
+            return f"{tot_evts} events"
         return "events checked"
 
     if tool_name == "get_events_by_hash":
         if isinstance(res_obj, dict):
-            seen = res_obj.get("total_matching_events", 0)
+            seen = res_obj.get("total_runs") or res_obj.get("total_matching_events") or 0
             return f"seen {seen}x"
         return "hash prevalence"
 
     if tool_name == "get_events_in_window":
-        if isinstance(res_obj, dict):
+        if isinstance(res_obj, list):
+            return f"{len(res_obj)} window events"
+        elif isinstance(res_obj, dict):
             events = res_obj.get("events", [])
             return f"{len(events)} window events"
         return "window checked"

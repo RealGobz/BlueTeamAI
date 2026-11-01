@@ -15,6 +15,7 @@ from __future__ import annotations
 import glob
 from pathlib import Path
 import sys
+import threading
 from typing import Any
 
 # Ensure project root is accessible on sys.path
@@ -34,7 +35,42 @@ _RULES_DIR = _ROOT / "detection" / "rules"
 RULES: list[dict[str, Any]] = list(load_rules_index(_RULES_DIR).values())
 
 
-def pipeline(event: dict[str, Any]) -> int:
+def _execute_investigation(
+    thread_id: str,
+    initial_state: dict[str, Any],
+    match: dict[str, Any],
+    alert: dict[str, Any],
+) -> None:
+    try:
+        print(f"[*] Starting agent investigation with thread_id: {thread_id}")
+        from UI.main.runner import run_alert_investigation
+        result = run_alert_investigation(thread_id, initial_state)
+        last_msg = result["messages"][-1] if result.get("messages") else None
+        if last_msg:
+            content = getattr(last_msg, "content", "")
+            tool_calls = getattr(last_msg, "tool_calls", [])
+            print(f"[+] Agent investigation completed for {thread_id}: {content or tool_calls}")
+    except Exception as err:
+        print(f"[-] Agent execution error for {thread_id}: {err}")
+        try:
+            record_incomplete_verdict(
+                thread_id=thread_id,
+                alert=alert,
+                sigma_rule=match.get("rule", match),
+                end_reason=f"error: {err}",
+            )
+        except Exception:
+            pass
+    finally:
+        # Automatically record run metrics to tools/db/conclusion_run.csv
+        try:
+            from record_run import auto_record_run
+            auto_record_run(thread_id)
+        except Exception as rec_err:
+            print(f"[-] Auto-record run failed for {thread_id}: {rec_err}")
+
+
+def pipeline(event: dict[str, Any], async_investigation: bool = False) -> int:
     """
     Process an incoming event through the complete BlueTeamingAI workflow.
     1. Stores the event in the SQLite database for historical context.
@@ -68,33 +104,15 @@ def pipeline(event: dict[str, Any]) -> int:
                     "turns": 0,
                     "messages": [],
                 }
-                try:
-                    print(f"[*] Starting agent investigation with thread_id: {thread_id}")
-                    from UI.main.runner import run_alert_investigation
-                    result = run_alert_investigation(thread_id, initial_state)
-                    last_msg = result["messages"][-1] if result.get("messages") else None
-                    if last_msg:
-                        content = getattr(last_msg, "content", "")
-                        tool_calls = getattr(last_msg, "tool_calls", [])
-                        print(f"[+] Agent investigation completed for {thread_id}: {content or tool_calls}")
-                except Exception as err:
-                    print(f"[-] Agent execution error for {thread_id}: {err}")
-                    try:
-                        record_incomplete_verdict(
-                            thread_id=thread_id,
-                            alert=alert,
-                            sigma_rule=match.get("rule", match),
-                            end_reason=f"error: {err}",
-                        )
-                    except Exception:
-                        pass
-                finally:
-                    # Automatically record run metrics to tools/db/conclusion_run.csv
-                    try:
-                        from record_run import auto_record_run
-                        auto_record_run(thread_id)
-                    except Exception as rec_err:
-                        print(f"[-] Auto-record run failed for {thread_id}: {rec_err}")
+                if async_investigation:
+                    t = threading.Thread(
+                        target=_execute_investigation,
+                        args=(thread_id, initial_state, match, alert),
+                        daemon=True,
+                    )
+                    t.start()
+                else:
+                    _execute_investigation(thread_id, initial_state, match, alert)
 
     return 0
 
@@ -135,7 +153,7 @@ def start_listener() -> None:
                     event_handle, win32evtlog.EvtRenderEventXml
                 )
                 event_dict = parse_event_xml(xml_str)
-                pipeline(event_dict)
+                pipeline(event_dict, async_investigation=True)
             except Exception:
                 pass
 
