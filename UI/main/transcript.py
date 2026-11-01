@@ -100,9 +100,9 @@ def get_hitl_requests_for_thread(thread_id: str, db_path: Path | str = HITL_DB_P
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT request_id, thread_id, kind, tool_name, tool_args_json,
-                   status, decision, decided_at, created_at, result_json
-            FROM requests
+            SELECT request_id, thread_id, kind, status, payload_json,
+                   decision, note, created_at, expires_at, decided_at
+            FROM hitl_requests
             WHERE thread_id = ?
             ORDER BY created_at ASC
             """,
@@ -112,16 +112,28 @@ def get_hitl_requests_for_thread(thread_id: str, db_path: Path | str = HITL_DB_P
         results = []
         for r in rows:
             req = dict(r)
-            if req.get("tool_args_json"):
+            payload = {}
+            if req.get("payload_json"):
                 try:
-                    req["tool_args"] = json.loads(req["tool_args_json"])
+                    payload = json.loads(req["payload_json"])
                 except Exception:
-                    req["tool_args"] = {}
-            if req.get("result_json"):
+                    payload = {}
+            req["payload"] = payload
+            req["tool_name"] = payload.get("tool_name")
+            req["tool_args"] = payload.get("tool_args", {})
+            req["target"] = payload.get("target")
+            req["reason"] = payload.get("reason")
+            req["question"] = payload.get("question")
+            choices = payload.get("choices", [])
+            req["choices"] = choices
+            dec_val = req.get("decision")
+            if req.get("kind") == "ask_user" and dec_val is not None and str(dec_val).isdigit() and choices:
                 try:
-                    req["result"] = json.loads(req["result_json"])
+                    c_idx = int(dec_val)
+                    if 0 <= c_idx < len(choices):
+                        req["answer"] = choices[c_idx]
                 except Exception:
-                    req["result"] = {}
+                    pass
             results.append(req)
         return results
     except Exception:
@@ -284,33 +296,58 @@ def build_timeline_items(
                     decision = "unknown"
                     result_status = "waiting"
                     details = ""
+                    norm_target = target.strip().strip("{}").lower()
 
                     # Correlate from hitl_requests
                     matched_req = None
                     for hr in hitl_requests:
                         if hr.get("tool_name") == name:
                             hr_args = hr.get("tool_args", {})
-                            if hr_args.get("guid") == target or hr_args.get("path") == target:
+                            hr_tgt = str(hr.get("target") or hr_args.get("guid") or hr_args.get("path") or "").strip().strip("{}").lower()
+                            if hr_tgt == norm_target or norm_target in hr_tgt or hr_tgt in norm_target:
                                 matched_req = hr
                                 break
 
                     if matched_req:
                         decision = matched_req.get("decision") or matched_req.get("status") or "pending"
+                        if matched_req.get("note"):
+                            details = matched_req["note"]
 
-                    # Correlate from audit log
-                    for act in audit_actions:
-                        if act.get("tool") == name and (act.get("target") == target or target in str(act.get("target"))):
-                            decision = act.get("decision", decision)
-                            result_status = act.get("result", result_status)
-                            details = act.get("details", "")
+                    # Inspect direct tool result (ground truth from conversation state)
+                    if isinstance(res_obj, dict):
+                        res_status = res_obj.get("status", "")
+                        if res_status in ("killed", "quarantined", "dry_run"):
+                            decision = "approved" if res_status != "dry_run" else "dry_run"
+                            result_status = res_status
+                            details = res_obj.get("reason") or details
+                        elif res_status == "rejected_by_user":
+                            if decision != "approved":
+                                decision = "rejected"
+                            result_status = "rejected_by_user"
+                            details = res_obj.get("reason") or details
+                        elif res_status in ("not_allowed_target", "blocked_protected", "invalid_input", "not_found"):
+                            decision = "blocked"
+                            result_status = res_status
+                            details = res_obj.get("reason") or details
+                        else:
+                            result_status = res_status
+                            if not details:
+                                details = res_obj.get("reason", "")
+
+                    # Correlate from audit log (latest first to capture final outcome)
+                    for act in reversed(audit_actions):
+                        act_target = str(act.get("target") or "").strip().strip("{}").lower()
+                        if act.get("tool") == name and (act_target == norm_target or norm_target in act_target or act_target in norm_target):
+                            act_dec = act.get("decision")
+                            if act_dec == "approved" or decision in ("unknown", "pending"):
+                                decision = act_dec or decision
+                                result_status = act.get("result", result_status)
+                                if act.get("details"):
+                                    details = act["details"]
                             if act.get("dry_run"):
                                 decision = "dry_run"
                                 result_status = "dry_run"
                             break
-
-                    if not details and isinstance(res_obj, dict):
-                        result_status = res_obj.get("status", result_status)
-                        details = res_obj.get("reason", "")
 
                     if decision == "unknown" and result_status in ("not_allowed_target", "blocked_protected", "invalid_input", "not_found"):
                         decision = "blocked"

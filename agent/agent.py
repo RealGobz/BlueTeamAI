@@ -1,5 +1,8 @@
 import os
 import sys
+import tempfile
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -47,6 +50,8 @@ from utils import (
     quarantine_file_action,
     validate_ask_user_input,
     validate_respond_input,
+    log_audit_kill,
+    log_audit_quarantine,
 )
 from UI.HITL.server import request_tool_approval, request_continue, request_ask_user
 from UI.HITL.store import compute_action_hash, find_prior_rejection
@@ -243,6 +248,7 @@ def hitl_tool_node(state: AgentState, config: RunnableConfig | None = None):
             reason = str(raw_args.get("reason", "")).strip()
 
             # 1. Pre-checks (approved=False): GUID valid, in alert tree, not protected, process alive
+            precheck_audit = Path(tempfile.gettempdir()) / f"precheck_kill_{uuid.uuid4().hex}.jsonl"
             pre_check = terminate_process(
                 guid=guid,
                 reason=reason,
@@ -251,9 +257,14 @@ def hitl_tool_node(state: AgentState, config: RunnableConfig | None = None):
                 approved=False,
                 dry_run=DRY_RUN,
                 db_path=db_path,
-                audit_path=audit_path,
+                audit_path=precheck_audit,
                 thread_id=thread_id,
             )
+            try:
+                if precheck_audit.exists():
+                    precheck_audit.unlink()
+            except Exception:
+                pass
             if pre_check.get("status") != "rejected_by_user":
                 # Pre-check failed on safety/validity; return failure directly without prompting human
                 outputs.append(ToolMessage(content=json.dumps(pre_check), tool_call_id=tc["id"]))
@@ -329,6 +340,22 @@ def hitl_tool_node(state: AgentState, config: RunnableConfig | None = None):
                         "status": "rejected_by_user",
                         "reason": reason_msg,
                     }
+                    try:
+                        log_audit_kill({
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "alert_id": alert_id or "unknown",
+                            "thread_id": thread_id,
+                            "target_guid": guid,
+                            "target": guid,
+                            "reason": reason,
+                            "approved": False,
+                            "approver": "human",
+                            "status": "rejected_by_user",
+                            "dry_run": DRY_RUN,
+                            "details": reason_msg,
+                        }, audit_path=audit_path)
+                    except Exception:
+                        pass
 
             outputs.append(ToolMessage(content=json.dumps(result), tool_call_id=tc["id"]))
 
@@ -337,6 +364,7 @@ def hitl_tool_node(state: AgentState, config: RunnableConfig | None = None):
             reason = str(raw_args.get("reason", "")).strip()
 
             # 1. Pre-checks (approved=False): local file, exists, not protected, in alert tree, hash valid
+            precheck_audit = Path(tempfile.gettempdir()) / f"precheck_quarantine_{uuid.uuid4().hex}.jsonl"
             pre_check = quarantine_file_action(
                 path=path_val,
                 reason=reason,
@@ -346,9 +374,14 @@ def hitl_tool_node(state: AgentState, config: RunnableConfig | None = None):
                 dry_run=DRY_RUN,
                 db_path=db_path,
                 quarantine_dir=quarantine_dir,
-                audit_path=quarantine_audit_path,
+                audit_path=precheck_audit,
                 thread_id=thread_id,
             )
+            try:
+                if precheck_audit.exists():
+                    precheck_audit.unlink()
+            except Exception:
+                pass
             if pre_check.get("status") != "rejected_by_user":
                 outputs.append(ToolMessage(content=json.dumps(pre_check), tool_call_id=tc["id"]))
                 continue
@@ -425,6 +458,23 @@ def hitl_tool_node(state: AgentState, config: RunnableConfig | None = None):
                         "status": "rejected_by_user",
                         "reason": reason_msg,
                     }
+                    try:
+                        log_audit_quarantine({
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "alert_id": alert_id or "unknown",
+                            "thread_id": thread_id,
+                            "target": path_val,
+                            "target_path": path_val,
+                            "original_path": path_val,
+                            "reason": reason,
+                            "approved": False,
+                            "approver": "human",
+                            "status": "rejected_by_user",
+                            "dry_run": DRY_RUN,
+                            "details": reason_msg,
+                        }, audit_path=quarantine_audit_path)
+                    except Exception:
+                        pass
 
             outputs.append(ToolMessage(content=json.dumps(result), tool_call_id=tc["id"]))
 

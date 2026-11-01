@@ -85,7 +85,7 @@ def has_pending_hitl(thread_id: str, db_path: Path | str = HITL_DB_PATH) -> bool
         try:
             cur = conn.cursor()
             cur.execute(
-                "SELECT 1 FROM requests WHERE thread_id = ? AND status = 'pending' LIMIT 1",
+                "SELECT 1 FROM hitl_requests WHERE thread_id = ? AND status = 'pending' LIMIT 1",
                 (thread_id,),
             )
             return cur.fetchone() is not None
