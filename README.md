@@ -74,16 +74,16 @@ cd BlueTeamAI
 ```
 
 ### 2. Run All-In-One Setup & Start Watcher
-Run `setup.sh` in Git Bash (or `setup.ps1` in an **Administrator PowerShell**):
+Run `setup.bat` in Windows (or `setup.sh` in Git Bash):
 ```powershell
-# In Git Bash:
-bash setup.sh
+# Windows CMD or PowerShell (Zero friction - automatically bypasses execution policy):
+.\setup.bat -Scenario A1
 
-# Or with a scenario tag:
-bash setup.sh --scenario A1
-
-# Or in Administrator PowerShell:
+# Or in PowerShell directly:
 powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Scenario A1
+
+# Or in Git Bash:
+bash setup.sh --scenario A1
 ```
 The script is 100% autonomous and executes everything in sequence:
 - Installs Python 3.12 & dependencies into `.venv`.

@@ -25,7 +25,7 @@ Write-Host "      Created: $DisguisedExe" -ForegroundColor Green
 
 # 2. Command to drop payload and simulate persistence
 $PayloadScript = Join-Path $env:TEMP "svchost_updater.bat"
-$CmdArgs = "/c `"echo @echo Harmless simulation > `"$PayloadScript`" & reg add HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v SystemUpdaterService /t REG_SZ /d `"$PayloadScript`" /f & ping 127.0.0.1 -n 45 >nul`""
+$CmdArgs = "/c `"echo @echo Harmless simulation > `"$PayloadScript`" & reg add HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v SystemUpdaterService /t REG_SZ /d `"$PayloadScript`" /f & ping 127.0.0.1 -n 301 >nul`""
 
 # 3. Launch
 Write-Host "[2/3] Launching disguised file (triggers Sysmon & Sigma rule)..." -ForegroundColor Yellow

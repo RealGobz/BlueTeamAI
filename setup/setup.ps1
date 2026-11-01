@@ -41,29 +41,86 @@ Write-Host "==========================================================" -Foregro
 # ------------------------------------------------------------------------------
 # SECTION 1: PYTHON & VIRTUAL ENVIRONMENT
 # ------------------------------------------------------------------------------
-Write-Host "`n[1/8] Checking Python virtual environment (.venv)..." -ForegroundColor Yellow
+function Get-RealPython {
+    $candidates = @()
+    # Check PATH commands, explicitly filtering out Microsoft Store WindowsApps redirector shims
+    $cmds = Get-Command python.exe, py.exe, python3.exe -All -ErrorAction SilentlyContinue | Where-Object { $_.Source -notlike "*WindowsApps*" }
+    foreach ($c in $cmds) { $candidates += $c.Source }
+    
+    # If py.exe launcher is present, ask it directly for active python interpreter path
+    $pyLauncher = Get-Command py.exe -ErrorAction SilentlyContinue
+    if ($pyLauncher) {
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $pyResolved = (& $pyLauncher.Source -3 -c "import sys; print(sys.executable)" 2>$null) | Out-String
+            if ($pyResolved -and (Test-Path $pyResolved.Trim())) {
+                $candidates += $pyResolved.Trim()
+            }
+        } catch {}
+        $ErrorActionPreference = $prevEap
+    }
 
-$PythonCmd = Get-Command python.exe, py.exe, python3.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+    # Check standard install directories on Windows
+    $commonPaths = @(
+        (Join-Path $env:LOCALAPPDATA "Programs\Python\Python314\python.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\Python\Python313\python.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\Python\Python312\python.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\Python\Python311\python.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\Python\Python310\python.exe"),
+        (Join-Path $env:ProgramFiles "Python314\python.exe"),
+        (Join-Path $env:ProgramFiles "Python313\python.exe"),
+        (Join-Path $env:ProgramFiles "Python312\python.exe"),
+        (Join-Path $env:ProgramFiles "Python311\python.exe"),
+        (Join-Path $env:ProgramFiles "Python310\python.exe"),
+        "C:\Python314\python.exe",
+        "C:\Python313\python.exe",
+        "C:\Python312\python.exe",
+        "C:\Python311\python.exe",
+        "C:\Python310\python.exe"
+    )
+    foreach ($p in $commonPaths) { if (Test-Path $p) { $candidates += $p } }
 
-if (-not $PythonCmd) {
+    # Test candidate execution
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        foreach ($cand in $candidates) {
+            if ($cand -and (Test-Path $cand)) {
+                $verOutput = (& $cand --version 2>&1) | Out-String
+                if ($LASTEXITCODE -eq 0 -and $verOutput -match "Python\s+3\.") {
+                    return @{ Path = $cand; Version = $verOutput.Trim() }
+                }
+            }
+        }
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    return $null
+}
+
+$RealPython = Get-RealPython
+
+if (-not $RealPython) {
+    Write-Host "      [!] Real Python not found (Microsoft Store shortcut ignored)." -ForegroundColor Yellow
     $WingetCmd = Get-Command winget.exe -ErrorAction SilentlyContinue
     if ($WingetCmd) {
-        Write-Host "      [!] Python not found. Installing Python 3.12 via winget..." -ForegroundColor Yellow
+        Write-Host "      Installing Python 3.12 via winget..." -ForegroundColor Yellow
         winget install -e --id Python.Python.3.12 --accept-package-agreements --accept-source-agreements
         $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-        $PythonCmd = Get-Command python.exe, py.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+        $RealPython = Get-RealPython
     }
 }
 
-if (-not $PythonCmd) {
-    Write-Host "      [-] Error: Python is not installed or not in PATH." -ForegroundColor Red
-    Write-Host "          Please install Python 3.10+ from https://python.org or run:" -ForegroundColor Yellow
+if (-not $RealPython) {
+    Write-Host "      [-] Error: Python 3.10+ is not installed or not in PATH." -ForegroundColor Red
+    Write-Host "          Please install Python 3.10+ from https://python.org or run in an Admin PowerShell:" -ForegroundColor Yellow
     Write-Host "          winget install Python.Python.3.12" -ForegroundColor Cyan
     exit 1
 }
 
-$PythonVersion = & $PythonCmd.Source --version 2>&1
-Write-Host "      Using host Python: $PythonVersion" -ForegroundColor Gray
+$PythonBin = $RealPython.Path
+Write-Host "      Using host Python: $($RealPython.Version) ($PythonBin)" -ForegroundColor Gray
 
 $VenvDir = Join-Path $RootDir ".venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
@@ -71,7 +128,7 @@ $VenvPip = Join-Path $VenvDir "Scripts\pip.exe"
 
 if (-not (Test-Path $VenvPython)) {
     Write-Host "      Creating virtual environment in .venv..." -ForegroundColor Gray
-    & $PythonCmd.Source -m venv $VenvDir
+    & $PythonBin -m venv $VenvDir
 }
 
 Write-Host "      Upgrading pip and installing requirements.txt..." -ForegroundColor Gray
@@ -220,53 +277,68 @@ if ($ExistingRulesCount -lt 50) {
 # ------------------------------------------------------------------------------
 # SECTION 6: AZURE CLI FOR DefaultAzureCredential
 # ------------------------------------------------------------------------------
-Write-Host "`n[6/8] Checking Azure CLI (az) for DefaultAzureCredential..." -ForegroundColor Yellow
-
-$AzCmd = Get-Command az.cmd, az.exe, az.ps1 -ErrorAction SilentlyContinue | Select-Object -First 1
-
-if (-not $AzCmd) {
-    # Check default installation paths
-    $StandardAzPaths = @(
-        "C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.cmd",
-        "C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin\az.cmd"
-    )
-    foreach ($p in $StandardAzPaths) {
-        if (Test-Path $p) {
-            $env:Path = [System.IO.Path]::GetDirectoryName($p) + ";" + $env:Path
-            $AzCmd = Get-Command az.cmd, az.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-            break
-        }
+$EnvFile = Join-Path $RootDir ".env"
+$HasEndpoint = $false
+if (Test-Path $EnvFile) {
+    $EnvContent = Get-Content $EnvFile -ErrorAction SilentlyContinue
+    if ($EnvContent -match "^PROJECT_ENDPOINT=https://[a-zA-Z0-9]") {
+        $HasEndpoint = $true
     }
-}
-
-if (-not $AzCmd) {
-    Write-Host "      [!] Azure CLI not found in PATH. Installing Azure CLI..." -ForegroundColor Yellow
-    $WingetCmd = Get-Command winget.exe -ErrorAction SilentlyContinue
-    if ($WingetCmd) {
-        winget install -e --id Microsoft.AzureCLI --accept-package-agreements --accept-source-agreements
-    } else {
-        Start-Process msiexec.exe -ArgumentList "/i https://aka.ms/installazurecliwindows /quiet /qn /norestart" -Wait
-    }
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-    $AzCmd = Get-Command az.cmd, az.exe, az.ps1 -ErrorAction SilentlyContinue | Select-Object -First 1
 }
 
 $AzAuthenticated = $false
-if ($AzCmd) {
-    $AccountJson = az account show --output json 2>$null
-    if (-not $AccountJson) {
-        Write-Host "      [!] Azure CLI is not authenticated. DefaultAzureCredential requires login." -ForegroundColor Yellow
-        Write-Host "          Launching 'az login'..." -ForegroundColor Cyan
-        az login --output table
-        $AccountJson = az account show --output json 2>$null
-    }
-    if ($AccountJson) {
-        $AccountObj = $AccountJson | ConvertFrom-Json
-        Write-Host "      [OK] Azure CLI authenticated as: $($AccountObj.user.name)" -ForegroundColor Green
-        $AzAuthenticated = $true
-    }
+if ($SkipAzure) {
+    Write-Host "`n[6/8] Skipping Azure CLI check (-SkipAzure specified)..." -ForegroundColor Gray
+} elseif ($HasEndpoint) {
+    Write-Host "`n[6/8] Azure configuration found in .env (skipping Azure CLI login)..." -ForegroundColor Green
 } else {
-    Write-Host "      [NOTE] Azure CLI installed. If not active in this window, reopen PowerShell." -ForegroundColor Yellow
+    Write-Host "`n[6/8] Checking Azure CLI (az) for DefaultAzureCredential..." -ForegroundColor Yellow
+
+    $AzCmd = Get-Command az.cmd, az.exe, az.ps1 -ErrorAction SilentlyContinue | Select-Object -First 1
+
+    if (-not $AzCmd) {
+        # Check default installation paths
+        $StandardAzPaths = @(
+            "C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.cmd",
+            "C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin\az.cmd"
+        )
+        foreach ($p in $StandardAzPaths) {
+            if (Test-Path $p) {
+                $env:Path = [System.IO.Path]::GetDirectoryName($p) + ";" + $env:Path
+                $AzCmd = Get-Command az.cmd, az.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+                break
+            }
+        }
+    }
+
+    if (-not $AzCmd) {
+        Write-Host "      [!] Azure CLI not found in PATH. Installing Azure CLI..." -ForegroundColor Yellow
+        $WingetCmd = Get-Command winget.exe -ErrorAction SilentlyContinue
+        if ($WingetCmd) {
+            winget install -e --id Microsoft.AzureCLI --accept-package-agreements --accept-source-agreements
+        } else {
+            Start-Process msiexec.exe -ArgumentList "/i https://aka.ms/installazurecliwindows /quiet /qn /norestart" -Wait
+        }
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+        $AzCmd = Get-Command az.cmd, az.exe, az.ps1 -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
+
+    if ($AzCmd) {
+        $AccountJson = az account show --output json 2>$null
+        if (-not $AccountJson) {
+            Write-Host "      [!] Azure CLI is not authenticated. DefaultAzureCredential requires login." -ForegroundColor Yellow
+            Write-Host "          Launching 'az login'..." -ForegroundColor Cyan
+            az login --output table
+            $AccountJson = az account show --output json 2>$null
+        }
+        if ($AccountJson) {
+            $AccountObj = $AccountJson | ConvertFrom-Json
+            Write-Host "      [OK] Azure CLI authenticated as: $($AccountObj.user.name)" -ForegroundColor Green
+            $AzAuthenticated = $true
+        }
+    } else {
+        Write-Host "      [NOTE] Azure CLI installed. If not active in this window, reopen PowerShell." -ForegroundColor Yellow
+    }
 }
 
 # ------------------------------------------------------------------------------

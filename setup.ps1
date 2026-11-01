@@ -5,7 +5,7 @@
 param(
     [string]$Scenario   = "",
     [switch]$NoWatch    = $false,
-    [switch]$SkipAzure  = $true
+    [switch]$SkipAzure  = $false
 )
 
 $RootDir = $PSScriptRoot
