@@ -315,12 +315,32 @@ def validate_verdict(
     if isinstance(indicators_raw, dict):
         for k, v in indicators_raw.items():
             if isinstance(v, list):
-                indicators_to_check.extend([str(item).strip() for item in v if item])
+                for item in v:
+                    if isinstance(item, dict):
+                        val = item.get("value") or item.get("val") or item.get("indicator") or item.get("ioc")
+                        if val and isinstance(val, str) and val.strip():
+                            indicators_to_check.append(val.strip())
+                        else:
+                            for dv in item.values():
+                                if isinstance(dv, str) and dv.strip():
+                                    indicators_to_check.append(dv.strip())
+                    elif isinstance(item, str) and item.strip():
+                        indicators_to_check.append(item.strip())
             elif isinstance(v, str) and v.strip():
                 indicators_to_check.append(v.strip())
         sanitized["indicators"] = indicators_raw
     elif isinstance(indicators_raw, list):
-        indicators_to_check = [str(item).strip() for item in indicators_raw if item]
+        for item in indicators_raw:
+            if isinstance(item, dict):
+                val = item.get("value") or item.get("val") or item.get("indicator") or item.get("ioc")
+                if val and isinstance(val, str) and val.strip():
+                    indicators_to_check.append(val.strip())
+                else:
+                    for dv in item.values():
+                        if isinstance(dv, str) and dv.strip():
+                            indicators_to_check.append(dv.strip())
+            elif isinstance(item, str) and item.strip():
+                indicators_to_check.append(item.strip())
         sanitized["indicators"] = indicators_raw
     else:
         sanitized["indicators"] = None
