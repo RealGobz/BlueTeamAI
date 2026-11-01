@@ -314,6 +314,17 @@ if [ -f ".env" ] && command -v az >/dev/null 2>&1 && [ -n "$AZ_USER" ]; then
                 fi
             fi
             echo "      [OK] Automatically configured PROJECT_ENDPOINT and AZURE_AI_KEY"
+            
+            # Automatically scale deployment capacity up to subscription quota limit (up to 250k TPM)
+            QUOTA_LIMIT=$(az cognitiveservices usage list --location "${AZURE_LOCATION:-eastus}" --query "[?contains(name.value, 'gpt-5.6-sol') && contains(name.value, 'GlobalStandard')].limit | [0]" -o tsv 2>/dev/null || echo "250")
+            if [ -n "$QUOTA_LIMIT" ] && [ "$QUOTA_LIMIT" != "None" ]; then
+                TARGET_CAP=$(( QUOTA_LIMIT < 250 ? QUOTA_LIMIT : 250 ))
+                CURR_CAP=$(az cognitiveservices account deployment show --name "$FOUND_ACCOUNT" --resource-group "${RESOURCE_GROUP_NAME:-rg-blueteamingai}" --deployment-name agent_llm --query "properties.currentCapacity" -o tsv 2>/dev/null || echo "0")
+                if [ "$CURR_CAP" -lt "$TARGET_CAP" ] 2>/dev/null; then
+                    echo "      Scaling gpt-5.6-sol deployment capacity to ${TARGET_CAP}k TPM..."
+                    az cognitiveservices account deployment create --name "$FOUND_ACCOUNT" --resource-group "${RESOURCE_GROUP_NAME:-rg-blueteamingai}" --deployment-name agent_llm --model-name gpt-5.6-sol --model-version 2026-07-09 --model-format OpenAI --sku-capacity "$TARGET_CAP" --sku-name GlobalStandard --output none 2>/dev/null || true
+                fi
+            fi
         fi
     fi
 fi

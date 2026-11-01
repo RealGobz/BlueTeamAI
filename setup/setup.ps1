@@ -415,6 +415,19 @@ if (Test-Path $EnvFile) {
             }
             $NewLines | Set-Content -Path $EnvFile -Encoding utf8
             Write-Host "      [OK] Automatically configured PROJECT_ENDPOINT and AZURE_AI_KEY" -ForegroundColor Green
+
+            # Automatically scale deployment capacity up to subscription quota limit (up to 250k TPM)
+            try {
+                $QuotaRaw = (cmd.exe /c "az cognitiveservices usage list --location $AzureLocation --query `"[?contains(name.value, 'gpt-5.6-sol') && contains(name.value, 'GlobalStandard')].limit | [0]`" -o tsv 2>nul") | Out-String
+                $QuotaLimit = if ($QuotaRaw -match "^\s*([0-9]+)") { [int]$matches[1] } else { 250 }
+                $TargetCap = [Math]::Min($QuotaLimit, 250)
+                $CurCapRaw = (cmd.exe /c "az cognitiveservices account deployment show --name $FoundAccount --resource-group $ResourceGroupName --deployment-name agent_llm --query `"properties.currentCapacity`" -o tsv 2>nul") | Out-String
+                $CurCap = if ($CurCapRaw -match "^\s*([0-9]+)") { [int]$matches[1] } else { 0 }
+                if ($CurCap -lt $TargetCap) {
+                    Write-Host "      Scaling gpt-5.6-sol deployment capacity to ${TargetCap}k TPM..." -ForegroundColor Gray
+                    cmd.exe /c "az cognitiveservices account deployment create --name $FoundAccount --resource-group $ResourceGroupName --deployment-name agent_llm --model-name gpt-5.6-sol --model-version 2026-07-09 --model-format OpenAI --sku-capacity $TargetCap --sku-name GlobalStandard --output none 2>nul"
+                }
+            } catch {}
         } else {
             $ErrorActionPreference = $prevEap
         }

@@ -81,7 +81,7 @@
     },
     "capacity": {
       "type": "int",
-      "defaultValue": 10,
+      "defaultValue": 250,
       "metadata": {
         "description": "Capacity allocated to the model deployment (in thousands of TPM)."
       }

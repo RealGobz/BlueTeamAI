@@ -52,7 +52,7 @@ param modelVersion string = '2026-07-09'
 param skuName string = 'GlobalStandard'
 
 @description('Capacity allocated to the model deployment (in thousands of TPM).')
-param capacity int = 20
+param capacity int = 250
 
 // --- Partner Terms & EULA Acceptance Attestation ---
 
