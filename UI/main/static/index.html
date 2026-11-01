@@ -3,7 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BlueTeamingAI - Investigation Console</title>
+  <title>Triagent</title>
+  <link rel="icon" type="image/svg+xml" href="/brand/triagent-icon.svg">
+  <link rel="stylesheet" href="/brand/theme.css">
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
@@ -11,8 +13,27 @@
     <!-- Left Panel: Thread Navigation -->
     <aside id="sidebar" class="sidebar">
       <div class="sidebar-header">
-        <h1 class="sidebar-title">Investigations</h1>
-        <span id="active-runs-badge" class="badge badge-subtle">0 active</span>
+        <picture class="brand-lockup">
+          <source media="(prefers-color-scheme: light)" srcset="/brand/triagent-lockup-light.svg">
+          <img src="/brand/triagent-lockup-dark.svg" alt="Triagent" width="158" height="36">
+        </picture>
+        <span id="active-runs-badge" class="badge-active-runs">0 active</span>
+      </div>
+      <div class="sidebar-search-area">
+        <div class="search-input-wrapper">
+          <svg class="search-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="7" cy="7" r="5" />
+            <path d="M11 11l4 4" />
+          </svg>
+          <input type="text" id="thread-search-input" class="thread-search-input" placeholder="Search alerts... (/)" autocomplete="off" spellcheck="false" aria-label="Search alerts">
+          <kbd class="kbd-shortcut">/</kbd>
+        </div>
+        <div id="filter-pills" class="filter-pills" role="tablist" aria-label="Filter alerts">
+          <button type="button" class="filter-pill active" data-filter="all">All <span class="pill-count" id="count-all"></span></button>
+          <button type="button" class="filter-pill" data-filter="waiting">Needs decision <span class="pill-count" id="count-waiting"></span></button>
+          <button type="button" class="filter-pill" data-filter="attack">Attack <span class="pill-count" id="count-attack"></span></button>
+          <button type="button" class="filter-pill" data-filter="safe">Safe <span class="pill-count" id="count-safe"></span></button>
+        </div>
       </div>
       <div id="thread-list" class="thread-list" role="navigation" aria-label="Alert Threads">
         <div class="empty-state">Loading threads...</div>
@@ -24,8 +45,17 @@
       <!-- No Thread Selected State -->
       <div id="no-thread-selected" class="empty-view">
         <div class="empty-view-content">
-          <h2>No Thread Selected</h2>
-          <p>Select an alert thread from the left panel to review its timeline and chat with the agent.</p>
+          <picture class="brand-lockup-empty">
+            <source media="(prefers-color-scheme: light)" srcset="/brand/triagent-lockup-light.svg">
+            <img src="/brand/triagent-lockup-dark.svg" alt="Triagent" width="180" height="41">
+          </picture>
+          <h2 id="empty-state-title" class="empty-state-title">Watching. Nothing needs you right now.</h2>
+          <p class="empty-state-punchline">What if every alert came with an answer?</p>
+          <div class="shortcuts-hint">
+            <span class="hint-item"><kbd class="kbd-key">&uarr;</kbd> <kbd class="kbd-key">&darr;</kbd> Navigate</span>
+            <span class="hint-item"><kbd class="kbd-key">/</kbd> Search</span>
+            <span class="hint-item"><kbd class="kbd-key">Esc</kbd> Clear</span>
+          </div>
         </div>
       </div>
 
@@ -35,9 +65,9 @@
         <header id="thread-header" class="thread-header">
           <div class="header-main">
             <div class="header-title-row">
-              <span id="header-level" class="badge"></span>
+              <span id="header-level" class="level-chip"></span>
               <h2 id="header-title" class="header-title"></h2>
-              <span id="header-status" class="badge"></span>
+              <span id="header-status" class="st-chip"></span>
             </div>
             <div class="header-meta-row">
               <span id="header-host" class="meta-item"></span>
@@ -50,6 +80,18 @@
 
         <!-- Timeline Container -->
         <div id="timeline-container" class="timeline-container">
+          <div class="timeline-toolbar">
+            <div class="timeline-toolbar-left">
+              <span class="toolbar-label">Timeline</span>
+              <span id="timeline-count-badge" class="timeline-count-badge">0 items</span>
+            </div>
+            <div class="timeline-tabs" role="tablist" aria-label="Timeline Filters">
+              <button type="button" class="timeline-tab active" data-tab="all">All</button>
+              <button type="button" class="timeline-tab" data-tab="tools">Tools</button>
+              <button type="button" class="timeline-tab" data-tab="decisions">Decisions</button>
+              <button type="button" class="timeline-tab" data-tab="chat">Chat</button>
+            </div>
+          </div>
           <div id="timeline-items" class="timeline-items">
             <!-- Rendered dynamically by app.js -->
           </div>
@@ -67,7 +109,7 @@
               class="chat-input"
               rows="1"
               maxlength="2000"
-              placeholder="Ask the agent a question about this investigation (Enter to send, Shift+Enter for new line)..."
+              placeholder="Ask a question about this investigation (Enter to send, Shift+Enter for new line)..."
             ></textarea>
             <button id="chat-send-btn" type="submit" class="chat-send-btn">Send</button>
           </form>

@@ -321,6 +321,34 @@ class TestUiMainServer(unittest.TestCase):
         finally:
             unregister_run(tid)
 
+    def test_brand_assets_route_allowlist(self):
+        for name, expected_ct in [
+            ("theme.css", "text/css"),
+            ("triagent-icon.svg", "image/svg+xml"),
+            ("triagent-lockup-dark.svg", "image/svg+xml"),
+            ("triagent-lockup-light.svg", "image/svg+xml"),
+            ("triagent-wordmark-dark.svg", "image/svg+xml"),
+            ("triagent-wordmark-light.svg", "image/svg+xml"),
+        ]:
+            resp = self._request("GET", f"/brand/{name}")
+            self.assertEqual(resp.status, 200, f"Failed for {name}")
+            self.assertIn(expected_ct, resp.headers.get("Content-Type", ""))
+            self.assertEqual(resp.headers.get("X-Content-Type-Options"), "nosniff")
+            self.assertIn("no-store", resp.headers.get("Cache-Control", ""))
+
+        for bad in ["files%20(1).zip", "brand.md", "unknown.svg", "../server.py", "%2e%2e/server.py"]:
+            try:
+                resp = self._request("GET", f"/brand/{bad}")
+                self.assertEqual(resp.status, 404, f"Should be 404 for {bad}")
+            except HTTPError as e:
+                self.assertEqual(e.code, 404)
+
+    def test_csp_headers(self):
+        resp = self._request("GET", "/")
+        self.assertEqual(resp.status, 200)
+        expected_csp = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none';"
+        self.assertEqual(resp.headers.get("Content-Security-Policy"), expected_csp)
+
 
 if __name__ == "__main__":
     unittest.main()

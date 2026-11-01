@@ -9,6 +9,7 @@ Runs a lightweight ThreadingHTTPServer bound strictly to 127.0.0.1:
 Strict security headers (CSP, no-store, X-Frame-Options) and Host/Origin validation.
 """
 
+from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import hmac
 import json
@@ -56,6 +57,18 @@ from UI.HITL.pages import (
 _ACTIVE_SERVER: ThreadingHTTPServer | None = None
 _SERVER_LOCK = threading.Lock()
 
+BRAND_DIR = Path(__file__).resolve().parent.parent / "brand"
+HITL_STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+BRAND_ALLOWLIST = {
+    "theme.css": "text/css; charset=utf-8",
+    "triagent-icon.svg": "image/svg+xml; charset=utf-8",
+    "triagent-lockup-dark.svg": "image/svg+xml; charset=utf-8",
+    "triagent-lockup-light.svg": "image/svg+xml; charset=utf-8",
+    "triagent-wordmark-dark.svg": "image/svg+xml; charset=utf-8",
+    "triagent-wordmark-light.svg": "image/svg+xml; charset=utf-8",
+}
+
 
 def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
     """Check if a port is already bound on localhost."""
@@ -68,6 +81,8 @@ class HitlRequestHandler(BaseHTTPRequestHandler):
 
     # Set by the server factory
     db_path: Path | str = HITL_DB_PATH
+    brand_dir: Path = BRAND_DIR
+    static_dir: Path = HITL_STATIC_DIR
 
     def _send_response_html(self, status_code: int, html_body: str) -> None:
         """Send standard security headers and UTF-8 HTML response body."""
@@ -76,7 +91,10 @@ class HitlRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body_bytes)))
         # Security headers
-        self.send_header("Content-Security-Policy", "default-src 'none'; form-action 'self';")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none';",
+        )
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         self.send_header("X-Frame-Options", "DENY")
@@ -124,6 +142,67 @@ class HitlRequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(data)
             return
 
+        # Brand assets: GET /brand/<name>
+        if path.startswith("/brand/"):
+            name = path[len("/brand/"):]
+            if name not in BRAND_ALLOWLIST:
+                self._send_response_html(404, render_not_found_page("Brand asset not found"))
+                return
+
+            brand_file = (self.brand_dir / name).resolve()
+            if not brand_file.is_file() or not brand_file.is_relative_to(self.brand_dir.resolve()):
+                self._send_response_html(404, render_not_found_page("Brand asset not found"))
+                return
+
+            try:
+                body_bytes = brand_file.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", BRAND_ALLOWLIST[name])
+                self.send_header("Content-Length", str(len(body_bytes)))
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("X-Frame-Options", "DENY")
+                self.send_header(
+                    "Content-Security-Policy",
+                    "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none';",
+                )
+                self.end_headers()
+                self.wfile.write(body_bytes)
+            except Exception:
+                self._send_response_html(500, "<h1>500 Internal Server Error</h1>")
+            return
+
+        # HITL stylesheet: exact-match GET /static/hitl.css
+        if path.startswith("/static/"):
+            if path != "/static/hitl.css":
+                self._send_response_html(404, render_not_found_page("Static file not found"))
+                return
+
+            css_file = (self.static_dir / "hitl.css").resolve()
+            if not css_file.is_file() or not css_file.is_relative_to(self.static_dir.resolve()):
+                self._send_response_html(404, render_not_found_page("Stylesheet not found"))
+                return
+
+            try:
+                body_bytes = css_file.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/css; charset=utf-8")
+                self.send_header("Content-Length", str(len(body_bytes)))
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("X-Frame-Options", "DENY")
+                self.send_header(
+                    "Content-Security-Policy",
+                    "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none';",
+                )
+                self.end_headers()
+                self.wfile.write(body_bytes)
+            except Exception:
+                self._send_response_html(500, "<h1>500 Internal Server Error</h1>")
+            return
+
         # Pending requests index
         if path == "/" or path == "":
             pending = list_pending(db_path=self.db_path)
@@ -148,9 +227,22 @@ class HitlRequestHandler(BaseHTTPRequestHandler):
                 return
 
             status = req.get("status")
+            # Check for expiration either via status or timestamp
+            expires_at = req.get("expires_at", "")
+            is_time_expired = False
+            if expires_at:
+                try:
+                    exp_dt = datetime.fromisoformat(str(expires_at))
+                    if exp_dt.tzinfo is None:
+                        exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+                    if datetime.now(timezone.utc) >= exp_dt:
+                        is_time_expired = True
+                except Exception:
+                    pass
+
             if status == "decided":
                 self._send_response_html(200, render_already_decided_page(req))
-            elif status == "expired":
+            elif status == "expired" or is_time_expired:
                 self._send_response_html(200, render_expired_page(req))
             else:
                 kind = req.get("kind")
@@ -374,7 +466,7 @@ def request_tool_approval(
         from UI.HITL.notify import send_toast
         rule_title = str(payload["alert_title"])[:100]
         send_toast(
-            title=f"Approval Needed: {tool_name}",
+            title="Triagent: approval needed",
             message=f"{rule_title} - Click to approve or reject",
             url=url,
         )
@@ -464,7 +556,7 @@ def request_continue(
     try:
         from UI.HITL.notify import send_toast
         send_toast(
-            title="Turn Limit Reached",
+            title="Triagent: continue?",
             message="The AI investigator needs approval to continue.",
             url=url,
         )
@@ -557,7 +649,7 @@ def request_ask_user(
         from UI.HITL.notify import send_toast
         rule_title = str(payload["alert_title"])[:100]
         send_toast(
-            title="The AI analyst has a question",
+            title="Triagent: question for you",
             message=rule_title,
             url=url,
         )

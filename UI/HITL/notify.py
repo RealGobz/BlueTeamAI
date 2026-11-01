@@ -49,7 +49,7 @@ def send_toast(title: str, message: str, url: str) -> bool:
     bool
         True if notification was posted successfully, False otherwise.
     """
-    clean_title = _sanitize_toast_text(title, max_len=64) or "BlueTeamingAI Approval"
+    clean_title = _sanitize_toast_text(title, max_len=64) or "Triagent"
     clean_message = _sanitize_toast_text(message, max_len=100)
     safe_url = str(url).strip()
 
@@ -62,7 +62,7 @@ def send_toast(title: str, message: str, url: str) -> bool:
         import winotify
 
         toast = winotify.Notification(
-            app_id="BlueTeamingAI",
+            app_id="Triagent",
             title=clean_title,
             msg=clean_message,
             duration="long",

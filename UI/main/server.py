@@ -65,6 +65,16 @@ from UI.main.runner import (
 logger = logging.getLogger("UI.main.server")
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+BRAND_DIR = Path(__file__).resolve().parent.parent / "brand"
+
+BRAND_ALLOWLIST = {
+    "theme.css": "text/css; charset=utf-8",
+    "triagent-icon.svg": "image/svg+xml; charset=utf-8",
+    "triagent-lockup-dark.svg": "image/svg+xml; charset=utf-8",
+    "triagent-lockup-light.svg": "image/svg+xml; charset=utf-8",
+    "triagent-wordmark-dark.svg": "image/svg+xml; charset=utf-8",
+    "triagent-wordmark-light.svg": "image/svg+xml; charset=utf-8",
+}
 
 # Per-start CSRF token
 CSRF_TOKEN = secrets.token_hex(32)
@@ -92,6 +102,7 @@ class MainUiRequestHandler(BaseHTTPRequestHandler):
     audit_log_path: Path | str = AUDIT_LOG_PATH
     quarantine_audit_path: Path | str = QUARANTINE_AUDIT_LOG_PATH
     static_dir: Path = STATIC_DIR
+    brand_dir: Path = BRAND_DIR
     csrf_token: str = CSRF_TOKEN
     server_port: int = UI_MAIN_PORT
 
@@ -101,7 +112,7 @@ class MainUiRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(content_length))
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none';",
+            "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none';",
         )
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
@@ -192,7 +203,28 @@ class MainUiRequestHandler(BaseHTTPRequestHandler):
                 self._send_html(500, f"<h1>500 Internal Error</h1><p>{e}</p>")
             return
 
-        # 3. Static files: /static/*
+        # 3. Brand assets: GET /brand/<name>
+        if path.startswith("/brand/"):
+            name = path[len("/brand/"):]
+            if name not in BRAND_ALLOWLIST:
+                self._send_html(404, "<h1>404 Not Found</h1>")
+                return
+
+            brand_file = (self.brand_dir / name).resolve()
+            if not brand_file.is_file() or not brand_file.is_relative_to(self.brand_dir.resolve()):
+                self._send_html(404, "<h1>404 Not Found</h1>")
+                return
+
+            try:
+                body_bytes = brand_file.read_bytes()
+                self.send_response(200)
+                self._send_security_headers(BRAND_ALLOWLIST[name], len(body_bytes))
+                self.wfile.write(body_bytes)
+            except Exception as e:
+                self._send_html(500, f"<h1>500 Internal Error</h1><p>{e}</p>")
+            return
+
+        # 4. Static files: /static/*
         if path.startswith("/static/"):
             rel_name = path[len("/static/"):]
             # Prevent directory traversal

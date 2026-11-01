@@ -85,7 +85,8 @@ class TestHitlServer(unittest.TestCase):
         self.assertIn("no-store", res.getheader("Cache-Control", ""))
         self.assertEqual(res.getheader("X-Frame-Options"), "DENY")
         body = res.read().decode("utf-8")
-        self.assertIn("BlueTeamingAI - Pending Approval Requests", body)
+        self.assertIn("Pending requests", body)
+        self.assertIn("Triagent", body)
         conn.close()
 
     def test_get_request_page_valid_token(self):
@@ -100,7 +101,7 @@ class TestHitlServer(unittest.TestCase):
         res = conn.getresponse()
         self.assertEqual(res.status, 200)
         body = res.read().decode("utf-8")
-        self.assertIn("Human-In-The-Loop: Action Approval Required", body)
+        self.assertIn("Action approval required", body)
         self.assertIn("notepad.exe", body)
         self.assertIn('name="decision" value="approved"', body)
         conn.close()
@@ -392,6 +393,77 @@ class TestHitlServer(unittest.TestCase):
         res3 = conn3.getresponse()
         self.assertEqual(res3.status, 400)
         conn3.close()
+
+    def test_brand_assets_route_allowlist(self):
+        conn = self._get_conn()
+        # Allowed files
+        for name, expected_ct in [
+            ("theme.css", "text/css"),
+            ("triagent-icon.svg", "image/svg+xml"),
+            ("triagent-lockup-dark.svg", "image/svg+xml"),
+            ("triagent-lockup-light.svg", "image/svg+xml"),
+            ("triagent-wordmark-dark.svg", "image/svg+xml"),
+            ("triagent-wordmark-light.svg", "image/svg+xml"),
+        ]:
+            conn.request("GET", f"/brand/{name}")
+            res = conn.getresponse()
+            self.assertEqual(res.status, 200, f"Failed for {name}")
+            self.assertIn(expected_ct, res.getheader("Content-Type", ""))
+            self.assertEqual(res.getheader("X-Content-Type-Options"), "nosniff")
+            self.assertIn("no-store", res.getheader("Cache-Control", ""))
+            res.read()
+
+        # Non-allowed files and directory traversal
+        for bad in ["files%20(1).zip", "brand.md", "unknown.svg", "../server.py", "%2e%2e/server.py"]:
+            conn.request("GET", f"/brand/{bad}")
+            res = conn.getresponse()
+            self.assertEqual(res.status, 404, f"Should be 404 for {bad}")
+            res.read()
+        conn.close()
+
+    def test_static_hitl_css_route(self):
+        conn = self._get_conn()
+        conn.request("GET", "/static/hitl.css")
+        res = conn.getresponse()
+        self.assertEqual(res.status, 200)
+        self.assertIn("text/css", res.getheader("Content-Type", ""))
+        self.assertEqual(res.getheader("X-Content-Type-Options"), "nosniff")
+        self.assertIn("no-store", res.getheader("Cache-Control", ""))
+        body = res.read().decode("utf-8")
+        self.assertIn("--sp-1", body)
+
+        # Other static paths must return 404
+        for bad in ["/static/other.css", "/static/app.css", "/static/../server.py"]:
+            conn.request("GET", bad)
+            res = conn.getresponse()
+            self.assertEqual(res.status, 404)
+            res.read()
+        conn.close()
+
+    def test_csp_and_no_inline_styles(self):
+        req = create_request(
+            thread_id="t_csp_test",
+            kind="tool_approval",
+            payload={"tool_name": "kill_process", "target": "calc.exe"},
+            db_path=self.db_path,
+        )
+        conn = self._get_conn()
+        conn.request("GET", f"/r/{req['request_id']}?t={req['token']}")
+        res = conn.getresponse()
+        self.assertEqual(res.status, 200)
+
+        # Check exact CSP
+        csp = res.getheader("Content-Security-Policy", "")
+        expected_csp = "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none';"
+        self.assertEqual(csp, expected_csp)
+
+        # Check rendered HTML contains no inline styles, no <style>, no <script>
+        body = res.read().decode("utf-8")
+        self.assertNotIn('style="', body.lower())
+        self.assertNotIn("style='", body.lower())
+        self.assertNotIn("<style", body.lower())
+        self.assertNotIn("<script", body.lower())
+        conn.close()
 
 
 if __name__ == "__main__":

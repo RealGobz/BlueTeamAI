@@ -42,9 +42,11 @@ htmlcov/
 tools/db/*.db
 tools/db/*.db-journal
 tools/db/*.db-wal
+tools/db/*.db-shm
 tools/db/*.sqlite
 tools/db/*.sqlite-journal
 tools/db/*.sqlite-wal
+tools/db/*.sqlite-shm
 tools/db/*.jsonl
 tools/db/current_scenario.txt
 
@@ -86,4 +88,5 @@ next steps.md
 .DS_Store
 Thumbs.db
 ehthumbs.db
-[Bb]ackup/
+UI/preview/
+UI/brand/*.zip

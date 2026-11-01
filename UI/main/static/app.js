@@ -1,15 +1,58 @@
 /**
- * BlueTeamingAI Main UI - Application Logic
+ * Triagent Main UI - Application Logic
  *
- * Security:
- * - Strictly textContent and createTextNode only (NEVER innerHTML)
+ * Security & Styling Rules:
+ * - Strictly textContent and DOM node creation only (NEVER innerHTML)
  * - Meta CSRF token sent in X-CSRF-Token header
+ * - Fixed class allowlists: data values never directly become class names or attributes
+ * - Amber element (.needs-you) ONLY on "waiting for you" chips or pending indicators
+ * - Red (.v-attack) ONLY on confirmed "Real attack" verdicts
+ * - Neutral buttons and quiet status chips
  * - Polling with visibility awareness and scroll preservation
  * - URL Hash routing: #/thread/<id>
  */
 
 (function () {
   "use strict";
+
+  // Fixed Allowlists
+  const VERDICT_CLASS_MAP = {
+    "true_positive": "v-attack",
+    "false_positive": "v-safe",
+    "needs_more_info": "v-unsure"
+  };
+
+  const VERDICT_LABEL_MAP = {
+    "true_positive": "Real attack",
+    "false_positive": "False alarm",
+    "needs_more_info": "Needs more info"
+  };
+
+  const STATUS_CLASS_MAP = {
+    "working": "st-working",
+    "waiting_human": "st-waiting needs-you",
+    "done": "st-done",
+    "incomplete": "st-incomplete"
+  };
+
+  const TOOL_STATUS_MAP = {
+    "ok": "chip-ok",
+    "error": "chip-error",
+    "rejected": "chip-rejected",
+    "not_executed": "chip-skipped",
+    "waiting": "chip-waiting"
+  };
+
+  const DIRECTION_CLASS_MAP = {
+    "suspicious": "ev-suspicious",
+    "benign": "ev-benign",
+    "neutral": "ev-neutral"
+  };
+
+  const SENDER_CLASS_MAP = {
+    "user": "bubble-user",
+    "agent": "bubble-agent"
+  };
 
   // State
   let currentThreadId = null;
@@ -18,6 +61,10 @@
   let threadDetailPollTimer = null;
   let renderedItemIds = new Set();
   let detailsOpenState = new Map();
+  let allThreads = [];
+  let currentFilter = "all";
+  let currentSearchQuery = "";
+  let currentTimelineTab = "all";
 
   // Read CSRF Token and HITL port from meta tags
   const csrfMeta = document.querySelector('meta[name="csrf-token"]');
@@ -30,7 +77,15 @@
   const threadListEl = document.getElementById("thread-list");
   const activeRunsBadge = document.getElementById("active-runs-badge");
   const noThreadSelectedEl = document.getElementById("no-thread-selected");
+  const emptyStateTitleEl = document.getElementById("empty-state-title");
   const threadViewEl = document.getElementById("thread-view");
+
+  const threadSearchInput = document.getElementById("thread-search-input");
+  const filterPillsEl = document.getElementById("filter-pills");
+  const countAllEl = document.getElementById("count-all");
+  const countWaitingEl = document.getElementById("count-waiting");
+  const countAttackEl = document.getElementById("count-attack");
+  const countSafeEl = document.getElementById("count-safe");
 
   const headerTitleEl = document.getElementById("header-title");
   const headerLevelEl = document.getElementById("header-level");
@@ -42,6 +97,8 @@
 
   const timelineContainerEl = document.getElementById("timeline-container");
   const timelineItemsEl = document.getElementById("timeline-items");
+  const timelineCountBadge = document.getElementById("timeline-count-badge");
+  const timelineTabs = document.querySelectorAll(".timeline-tab");
 
   const inputStatusBanner = document.getElementById("input-status-banner");
   const inputStatusText = document.getElementById("input-status-text");
@@ -60,51 +117,66 @@
     return el;
   }
 
-  // Format Level Badge
-  function setLevelBadge(el, level) {
-    el.textContent = (level || "UNKNOWN").toUpperCase();
-    el.className = "badge";
-    const l = (level || "").toLowerCase();
-    if (l === "critical" || l === "high") {
-      el.classList.add("badge-danger");
-    } else if (l === "medium") {
-      el.classList.add("badge-warning");
-    } else if (l === "low") {
-      el.classList.add("badge-info");
-    } else {
-      el.classList.add("badge-subtle");
-    }
+  // Helper: Copy to Clipboard Button
+  function createCopyButton(textToCopy) {
+    const btn = createEl("button", "copy-btn", "Copy");
+    btn.type = "button";
+    btn.title = "Copy to clipboard";
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (!textToCopy) return;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(textToCopy).then(function () {
+          btn.textContent = "✓ Copied";
+          btn.classList.add("copied");
+          setTimeout(function () {
+            btn.textContent = "Copy";
+            btn.classList.remove("copied");
+          }, 1800);
+        }).catch(function () {
+          btn.textContent = "Error";
+        });
+      }
+    });
+    return btn;
   }
 
-  // Format Status Badge
+  // Format Level Badge (Neutral: label only, no color)
+  function setLevelBadge(el, level) {
+    el.textContent = (level || "UNKNOWN").toUpperCase();
+    el.className = "level-chip";
+  }
+
+  // Format Status Badge (Allowlist lookup only)
   function setStatusBadge(el, status, verdict) {
-    el.className = "badge";
+    el.className = "st-chip";
+
     if (status === "working") {
-      el.textContent = "Working...";
-      el.classList.add("badge-warning");
+      el.textContent = "working";
+      el.classList.add("st-working");
     } else if (status === "waiting_human") {
-      el.textContent = "Waiting for you";
-      el.classList.add("badge-danger");
+      el.textContent = "waiting for you";
+      el.classList.add("st-waiting", "needs-you");
     } else if (status === "done") {
       if (verdict === "true_positive") {
         el.textContent = "Real attack";
-        el.classList.add("badge-danger");
+        el.classList.add("v-attack");
       } else if (verdict === "false_positive") {
         el.textContent = "False alarm";
-        el.classList.add("badge-success");
+        el.classList.add("v-safe");
       } else if (verdict === "needs_more_info") {
         el.textContent = "Needs more info";
-        el.classList.add("badge-warning");
+        el.classList.add("v-unsure");
       } else {
-        el.textContent = "Done";
-        el.classList.add("badge-success");
+        el.textContent = "done";
+        el.classList.add("st-done");
       }
     } else if (status === "incomplete") {
-      el.textContent = "Incomplete";
-      el.classList.add("badge-subtle");
+      el.textContent = "incomplete";
+      el.classList.add("st-incomplete");
     } else {
-      el.textContent = status || "Unknown";
-      el.classList.add("badge-subtle");
+      el.textContent = status || "unknown";
+      el.classList.add("st-incomplete");
     }
   }
 
@@ -164,22 +236,74 @@
   }
 
   function renderThreadList(threads) {
+    allThreads = threads || [];
+    applyThreadFilters();
+  }
+
+  function applyThreadFilters() {
+    let activeCount = 0;
+    let waitingHumanCount = 0;
+    let attackCount = 0;
+    let safeCount = 0;
+
+    allThreads.forEach((t) => {
+      if (t.status === "working") activeCount++;
+      if (t.status === "waiting_human" || (t.pending_hitl_count && t.pending_hitl_count > 0)) waitingHumanCount++;
+      if (t.verdict === "true_positive") attackCount++;
+      if (t.verdict === "false_positive") safeCount++;
+    });
+
+    if (countAllEl) countAllEl.textContent = allThreads.length ? `(${allThreads.length})` : "";
+    if (countWaitingEl) countWaitingEl.textContent = waitingHumanCount ? `(${waitingHumanCount})` : "";
+    if (countAttackEl) countAttackEl.textContent = attackCount ? `(${attackCount})` : "";
+    if (countSafeEl) countSafeEl.textContent = safeCount ? `(${safeCount})` : "";
+
+    const query = (currentSearchQuery || "").toLowerCase().trim();
+
+    const filtered = allThreads.filter((t) => {
+      if (currentFilter === "waiting" && t.status !== "waiting_human" && !(t.pending_hitl_count && t.pending_hitl_count > 0)) {
+        return false;
+      }
+      if (currentFilter === "attack" && t.verdict !== "true_positive") {
+        return false;
+      }
+      if (currentFilter === "safe" && t.verdict !== "false_positive") {
+        return false;
+      }
+
+      if (query) {
+        const titleMatch = (t.title || "").toLowerCase().includes(query);
+        const hostMatch = (t.host || "").toLowerCase().includes(query);
+        const userMatch = (t.user || "").toLowerCase().includes(query);
+        const idMatch = (t.thread_id || "").toLowerCase().includes(query);
+        if (!titleMatch && !hostMatch && !userMatch && !idMatch) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+
+    renderFilteredThreadList(filtered, activeCount, waitingHumanCount);
+  }
+
+  function renderFilteredThreadList(threads, activeCount, waitingHumanCount) {
     if (!threads || threads.length === 0) {
       threadListEl.textContent = "";
-      threadListEl.appendChild(createEl("div", "empty-state", "No alert threads found."));
-      activeRunsBadge.textContent = "0 active";
+      const msg = allThreads.length === 0 ? "No alert threads found." : "No matching alerts found.";
+      threadListEl.appendChild(createEl("div", "empty-state", msg));
+      if (activeRunsBadge) activeRunsBadge.textContent = `${activeCount} active`;
       return;
     }
 
-    let activeCount = 0;
     const fragment = document.createDocumentFragment();
 
     threads.forEach((t) => {
-      if (t.status === "working") activeCount++;
-
       const card = createEl("a", "thread-card");
       card.href = `#/thread/${t.thread_id}`;
+      card.dataset.threadId = t.thread_id;
       if (t.thread_id === currentThreadId) {
+        card.setAttribute("aria-current", "true");
         card.classList.add("active");
       }
 
@@ -211,9 +335,20 @@
       fragment.appendChild(card);
     });
 
-    activeRunsBadge.textContent = `${activeCount} active`;
+    if (activeRunsBadge) activeRunsBadge.textContent = `${activeCount} active`;
     threadListEl.textContent = "";
     threadListEl.appendChild(fragment);
+
+    // Update empty state banner according to waiting status
+    if (emptyStateTitleEl) {
+      emptyStateTitleEl.textContent = "";
+      if (waitingHumanCount > 0) {
+        const span = createEl("span", "needs-you", `${waitingHumanCount} thing${waitingHumanCount === 1 ? "" : "s"} need${waitingHumanCount === 1 ? "s" : ""} you`);
+        emptyStateTitleEl.appendChild(span);
+      } else {
+        emptyStateTitleEl.textContent = "Watching. Nothing needs you right now.";
+      }
+    }
   }
 
   // Select and Open Thread
@@ -233,8 +368,10 @@
     // Highlight in sidebar
     document.querySelectorAll(".thread-card").forEach((c) => {
       if (c.getAttribute("href") === `#/thread/${threadId}`) {
+        c.setAttribute("aria-current", "true");
         c.classList.add("active");
       } else {
+        c.removeAttribute("aria-current");
         c.classList.remove("active");
       }
     });
@@ -275,7 +412,6 @@
     if (threadDetailPollTimer) clearTimeout(threadDetailPollTimer);
     if (!currentThreadId || document.hidden) return;
 
-    // 1.5s while working, 5s otherwise
     const interval = currentRunState === "running" ? 1500 : 5000;
     threadDetailPollTimer = setTimeout(fetchThreadDetail, interval);
   }
@@ -310,7 +446,6 @@
       let existing = document.getElementById(`item_${itemId}`);
 
       if (existing) {
-        // If changed, update content
         updateTimelineItemNode(existing, item);
       } else {
         const itemNode = createTimelineItemNode(item);
@@ -322,9 +457,42 @@
       }
     });
 
-    // Auto-scroll to bottom only if user was already at bottom
+    filterAllTimelineItems();
+
     if (isAtBottom) {
       timelineContainerEl.scrollTop = timelineContainerEl.scrollHeight;
+    }
+  }
+
+  function applyTimelineTabFilter(node) {
+    if (!node || !node.dataset) return;
+    const type = node.dataset.itemType;
+    let visible = true;
+    if (currentTimelineTab === "tools") {
+      visible = (type === "tool");
+    } else if (currentTimelineTab === "decisions") {
+      visible = (type === "verdict" || type === "action" || type === "ask_user" || type === "verdict_rejected");
+    } else if (currentTimelineTab === "chat") {
+      visible = (type === "chat_bubble" || type === "ask_user");
+    }
+    if (visible) {
+      node.classList.remove("hidden");
+    } else {
+      node.classList.add("hidden");
+    }
+  }
+
+  function filterAllTimelineItems() {
+    const children = timelineItemsEl.querySelectorAll(".item-card, .chat-bubble-container, .verdict-superseded-container, .timeline-note");
+    let visibleCount = 0;
+    children.forEach((child) => {
+      applyTimelineTabFilter(child);
+      if (!child.classList.contains("hidden")) {
+        visibleCount++;
+      }
+    });
+    if (timelineCountBadge) {
+      timelineCountBadge.textContent = `${visibleCount} item${visibleCount === 1 ? "" : "s"}`;
     }
   }
 
@@ -354,35 +522,49 @@
 
   // Create Specific Timeline Items
   function createTimelineItemNode(item) {
+    let node = null;
     switch (item.type) {
       case "alert":
-        return renderAlertCard(item);
+        node = renderAlertCard(item);
+        break;
       case "plan":
-        return renderPlanCard(item);
+        node = renderPlanCard(item);
+        break;
       case "tool":
-        return renderToolCard(item);
+        node = renderToolCard(item);
+        break;
       case "action":
-        return renderActionCard(item);
+        node = renderActionCard(item);
+        break;
       case "ask_user":
-        return renderAskUserCard(item);
+        node = renderAskUserCard(item);
+        break;
       case "chat_bubble":
-        return renderChatBubble(item);
+        node = renderChatBubble(item);
+        break;
       case "verdict_rejected":
-        return renderVerdictRejectedChip(item);
+        node = renderVerdictRejectedChip(item);
+        break;
       case "verdict":
-        return renderVerdictCard(item);
+        node = renderVerdictCard(item);
+        break;
       case "note":
-        return renderNoteItem(item);
+        node = renderNoteItem(item);
+        break;
       default:
         return null;
     }
+    if (node) {
+      node.dataset.itemType = item.type;
+      applyTimelineTabFilter(node);
+    }
+    return node;
   }
 
   function updateTimelineItemNode(node, item) {
     const replacement = createTimelineItemNode(item);
     if (replacement && node.parentNode) {
       replacement.id = node.id;
-      // Preserve open details state
       const oldDetails = node.querySelector("details");
       const newDetails = replacement.querySelector("details");
       if (oldDetails && newDetails && oldDetails.open) {
@@ -423,6 +605,11 @@
     card.appendChild(grid);
 
     if (item.command_line) {
+      const cmdRow = createEl("div", "code-header-row");
+      cmdRow.appendChild(createEl("span", "meta-item", "Command:"));
+      cmdRow.appendChild(createCopyButton(item.command_line));
+      card.appendChild(cmdRow);
+
       const cmd = createEl("div", "alert-cmd", item.command_line);
       card.appendChild(cmd);
     }
@@ -430,6 +617,12 @@
     if (item.raw_alert) {
       const det = createEl("details", "tool-details");
       det.appendChild(createEl("summary", null, "Raw Alert Event"));
+
+      const rawRow = createEl("div", "code-header-row");
+      rawRow.appendChild(createEl("span", "meta-item", "Event data"));
+      rawRow.appendChild(createCopyButton(item.raw_alert));
+      det.appendChild(rawRow);
+
       const body = createEl("pre", "tool-result-body", item.raw_alert);
       det.appendChild(body);
       card.appendChild(det);
@@ -451,7 +644,7 @@
     return card;
   }
 
-  // 3. Compact Tool Card
+  // 3. Compact Tool Card (Quiet, neutral status chip)
   function renderToolCard(item) {
     const card = createEl("div", "item-card tool-card");
 
@@ -459,20 +652,24 @@
     const nameSpan = createEl("span", "tool-name", item.tool_name);
     header.appendChild(nameSpan);
 
-    const chip = createEl("span", "badge");
-    const st = item.status || "ok";
-    chip.textContent = st;
-    if (st === "ok") chip.classList.add("badge-success");
-    else if (st === "error" || st === "rejected") chip.classList.add("badge-danger");
-    else if (st === "not_executed" || st === "waiting") chip.classList.add("badge-warning");
-    else chip.classList.add("badge-subtle");
+    const rawStatus = item.status || "ok";
+    const statusClass = TOOL_STATUS_MAP[rawStatus] || "chip-neutral";
+    const chip = createEl("span", "chip " + statusClass, rawStatus);
 
     header.appendChild(chip);
     card.appendChild(header);
 
-    // Args box
     if (item.args && Object.keys(item.args).length > 0) {
       const argsBox = createEl("div", "tool-args-box");
+      const argsRow = createEl("div", "code-header-row");
+      argsRow.appendChild(createEl("span", null, "Arguments:"));
+      let argsText = "";
+      for (const [k, v] of Object.entries(item.args)) {
+        argsText += `${k}: ${v}\n`;
+      }
+      argsRow.appendChild(createCopyButton(argsText.trim()));
+      argsBox.appendChild(argsRow);
+
       for (const [k, v] of Object.entries(item.args)) {
         const line = createEl("div", null, `${k}: ${v}`);
         argsBox.appendChild(line);
@@ -480,8 +677,8 @@
       card.appendChild(argsBox);
     }
 
-    // Collapsible Result
     if (item.result_preview || item.result_full) {
+      const resText = item.result_full || item.result_preview;
       const det = createEl("details", "tool-details");
       det.addEventListener("toggle", function () {
         detailsOpenState.set(item.id, det.open);
@@ -489,8 +686,14 @@
       if (detailsOpenState.get(item.id)) {
         det.open = true;
       }
-      det.appendChild(createEl("summary", null, "View Tool Output"));
-      const body = createEl("pre", "tool-result-body", item.result_full || item.result_preview);
+      det.appendChild(createEl("summary", null, "View tool output"));
+
+      const outRow = createEl("div", "code-header-row");
+      outRow.appendChild(createEl("span", "meta-item", "Output text"));
+      outRow.appendChild(createCopyButton(resText));
+      det.appendChild(outRow);
+
+      const body = createEl("pre", "tool-result-body", resText);
       det.appendChild(body);
       card.appendChild(det);
     }
@@ -498,7 +701,7 @@
     return card;
   }
 
-  // 4. Action Card (kill_process / quarantine_file)
+  // 4. Action Card (Human Decision: neutral styling)
   function renderActionCard(item) {
     const card = createEl("div", "item-card action-card");
 
@@ -506,14 +709,14 @@
     const title = createEl("span", "action-target", `${item.tool_name}: ${item.target}`);
     header.appendChild(title);
 
-    const badge = createEl("span", "badge");
     const dec = item.decision || "pending";
-    badge.textContent = `Decision: ${dec}`;
-    if (dec === "approved") badge.classList.add("badge-success");
-    else if (dec === "rejected" || dec === "blocked") badge.classList.add("badge-danger");
-    else if (dec === "dry_run") badge.classList.add("badge-info");
-    else badge.classList.add("badge-warning");
+    let decisionText = "Pending decision";
+    if (dec === "approved") decisionText = "You approved";
+    else if (dec === "rejected" || dec === "blocked") decisionText = "You rejected";
+    else if (dec === "dry_run") decisionText = "Dry run";
+    else if (dec === "expired") decisionText = "Expired";
 
+    const badge = createEl("span", "chip", decisionText);
     header.appendChild(badge);
     card.appendChild(header);
 
@@ -521,6 +724,10 @@
       card.appendChild(createEl("div", "tool-card-meta", `Reason: ${item.reason}`));
     }
     if (item.details) {
+      const detRow = createEl("div", "code-header-row");
+      detRow.appendChild(createEl("span", "meta-item", "Action payload"));
+      detRow.appendChild(createCopyButton(item.details));
+      card.appendChild(detRow);
       card.appendChild(createEl("div", "alert-cmd", item.details));
     }
     return card;
@@ -529,7 +736,7 @@
   // 5. Ask User Card
   function renderAskUserCard(item) {
     const card = createEl("div", "item-card ask-user-card");
-    card.appendChild(createEl("div", "ask-user-question", `Human Question: ${item.question}`));
+    card.appendChild(createEl("div", "ask-user-question", `Question: ${item.question}`));
 
     if (item.choices && item.choices.length > 0) {
       const ul = createEl("ul", "ask-user-choices");
@@ -541,9 +748,9 @@
 
     const answerDiv = createEl("div", null);
     if (item.status === "answered" && item.answer) {
-      answerDiv.appendChild(createEl("span", "ask-user-answer", `User Answer: ${item.answer}`));
+      answerDiv.appendChild(createEl("span", "ask-user-answer", `Answer: ${item.answer}`));
     } else {
-      const waitChip = createEl("span", "badge badge-warning", `Status: ${item.status || "pending"}`);
+      const waitChip = createEl("span", "chip", `Status: ${item.status || "pending"}`);
       answerDiv.appendChild(waitChip);
     }
     card.appendChild(answerDiv);
@@ -552,8 +759,11 @@
 
   // 6. Chat Bubbles
   function renderChatBubble(item) {
-    const container = createEl("div", `chat-bubble-container ${item.sender}`);
-    const bubble = createEl("div", `chat-bubble ${item.sender}`);
+    const sender = item.sender === "user" ? "user" : "agent";
+    const senderClass = SENDER_CLASS_MAP[sender] || "bubble-agent";
+
+    const container = createEl("div", "chat-bubble-container " + senderClass);
+    const bubble = createEl("div", "chat-bubble " + senderClass);
 
     if (item.unstructured) {
       bubble.appendChild(createEl("span", "unstructured-tag", "Unstructured reply"));
@@ -569,39 +779,29 @@
   function renderVerdictRejectedChip(item) {
     const chip = createEl("div", "verdict-rejected-chip");
     const errText = (item.errors || []).join("; ") || "Verdict submission rejected, agent retrying";
-    chip.textContent = `Verdict submission rejected: ${errText}`;
+    chip.textContent = `Verdict rejected: ${errText}`;
     return chip;
   }
 
   // 8. Verdict Card (Prominent & Complete)
   function renderVerdictCard(item) {
     const isSuperseded = Boolean(item.superseded);
-
-    // If superseded, wrap in a collapsed details element
     let wrapper = null;
-    let cardParent = null;
 
     if (isSuperseded) {
       wrapper = createEl("details", "verdict-superseded-container");
       wrapper.appendChild(createEl("summary", null, `Revision ${item.revision} (Superseded - click to view)`));
-      cardParent = wrapper;
     }
 
-    const card = createEl("div", `verdict-card ${item.verdict || "needs_more_info"}`);
+    const vClass = VERDICT_CLASS_MAP[item.verdict] || "v-unsure";
+    const vLabel = VERDICT_LABEL_MAP[item.verdict] || "Needs more info";
+
+    const card = createEl("div", "verdict-card " + vClass);
 
     // Header: Headline Badge & Classification Badges
     const header = createEl("div", "verdict-header");
 
-    const headlineBadge = createEl("span", "badge verdict-headline-badge");
-    const badgeText = item.headline_badge || "Verdict";
-    headlineBadge.textContent = badgeText;
-    if (item.verdict === "true_positive") {
-      headlineBadge.classList.add("badge-danger");
-    } else if (item.verdict === "false_positive") {
-      headlineBadge.classList.add("badge-success");
-    } else {
-      headlineBadge.classList.add("badge-warning");
-    }
+    const headlineBadge = createEl("span", "verdict-headline-badge " + vClass, vLabel);
     header.appendChild(headlineBadge);
 
     const rightBadges = createEl("div", "thread-card-badges");
@@ -611,10 +811,10 @@
       rightBadges.appendChild(sevBadge);
     }
     if (item.confidence) {
-      rightBadges.appendChild(createEl("span", "badge badge-subtle", `Confidence: ${item.confidence}`));
+      rightBadges.appendChild(createEl("span", "chip", `Confidence: ${item.confidence}`));
     }
     if (item.category) {
-      rightBadges.appendChild(createEl("span", "badge badge-subtle", `Category: ${item.category}`));
+      rightBadges.appendChild(createEl("span", "chip", `Category: ${item.category}`));
     }
     header.appendChild(rightBadges);
     card.appendChild(header);
@@ -635,8 +835,11 @@
 
       item.evidence.forEach((ev) => {
         const li = createEl("li", "evidence-item");
-        const dir = ev.direction || "neutral";
-        const dirBadge = createEl("span", `direction-badge direction-${dir}`, `[${dir}]`);
+        const rawDir = (ev.direction || "neutral").toLowerCase();
+        const dirClass = DIRECTION_CLASS_MAP[rawDir] || "ev-neutral";
+        const dirLabel = rawDir === "suspicious" ? "[SUSPICIOUS]" : rawDir === "benign" ? "[BENIGN]" : "[NEUTRAL]";
+
+        const dirBadge = createEl("span", "direction-badge " + dirClass, dirLabel);
         li.appendChild(dirBadge);
         li.appendChild(createEl("span", null, `${ev.finding} (source: ${ev.source_tool || "unknown"})`));
         evList.appendChild(li);
@@ -653,7 +856,7 @@
     ];
     if (unverified.length > 0) {
       const unvSec = createEl("div", "verdict-section");
-      unvSec.appendChild(createEl("div", "verdict-section-title", "What AI Couldn't Verify"));
+      unvSec.appendChild(createEl("div", "verdict-section-title", "What Triagent Couldn't Verify"));
       const ul = createEl("ul", "evidence-list");
       unverified.forEach((u) => {
         ul.appendChild(createEl("li", "evidence-item", u));
@@ -699,6 +902,10 @@
       card.appendChild(misSec);
     }
 
+    // Room for future Agree/Disagree buttons
+    const placeholder = createEl("div", "verdict-actions-placeholder");
+    card.appendChild(placeholder);
+
     // Footer: Revision, Duration, Turns, Tool Count
     const footer = createEl("div", "verdict-footer");
     const ftData = item.footer || {};
@@ -735,6 +942,13 @@
     }
   });
 
+  if (chatInput) {
+    chatInput.addEventListener("input", function () {
+      chatInput.style.height = "auto";
+      chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + "px";
+    });
+  }
+
   async function submitChatMessage() {
     if (!currentThreadId) return;
     const text = chatInput.value.trim();
@@ -750,11 +964,12 @@
           "Content-Type": "application/json",
           "X-CSRF-Token": csrfToken,
         },
-        body: jsonSafeStringify({ text: text }),
+        body: JSON.stringify({ text: text }),
       });
 
       if (resp.status === 202) {
         chatInput.value = "";
+        chatInput.style.height = "auto";
         currentRunState = "running";
         updateInputBoxState({ state: "running" });
         scheduleThreadDetailPoll();
@@ -778,9 +993,84 @@
     }
   }
 
-  function jsonSafeStringify(obj) {
-    return JSON.stringify(obj);
+  // Search Input Listener
+  if (threadSearchInput) {
+    threadSearchInput.addEventListener("input", function () {
+      currentSearchQuery = threadSearchInput.value;
+      applyThreadFilters();
+    });
   }
+
+  // Filter Pills Listener
+  if (filterPillsEl) {
+    filterPillsEl.addEventListener("click", function (e) {
+      const btn = e.target.closest(".filter-pill");
+      if (!btn) return;
+      filterPillsEl.querySelectorAll(".filter-pill").forEach((p) => p.classList.remove("active"));
+      btn.classList.add("active");
+      currentFilter = btn.dataset.filter || "all";
+      applyThreadFilters();
+    });
+  }
+
+  // Timeline Tab Filters Listener
+  timelineTabs.forEach(function (tab) {
+    tab.addEventListener("click", function () {
+      timelineTabs.forEach((t) => t.classList.remove("active"));
+      tab.classList.add("active");
+      currentTimelineTab = tab.dataset.tab || "all";
+      filterAllTimelineItems();
+    });
+  });
+
+  // Global Keyboard Shortcuts (/, Esc, Arrow keys, j/k)
+  window.addEventListener("keydown", function (e) {
+    const activeTag = document.activeElement ? document.activeElement.tagName.toLowerCase() : "";
+    const isTyping = activeTag === "input" || activeTag === "textarea";
+
+    if (e.key === "/" && !isTyping) {
+      if (threadSearchInput) {
+        e.preventDefault();
+        threadSearchInput.focus();
+        threadSearchInput.select();
+      }
+      return;
+    }
+
+    if (e.key === "Escape") {
+      if (threadSearchInput && document.activeElement === threadSearchInput) {
+        threadSearchInput.value = "";
+        currentSearchQuery = "";
+        threadSearchInput.blur();
+        applyThreadFilters();
+        return;
+      }
+    }
+
+    if (!isTyping && (e.key === "ArrowDown" || e.key === "j" || e.key === "ArrowUp" || e.key === "k")) {
+      const visibleCards = Array.from(threadListEl.querySelectorAll(".thread-card"));
+      if (visibleCards.length === 0) return;
+
+      let currentIndex = visibleCards.findIndex((c) => c.dataset.threadId === currentThreadId);
+      let nextIndex = currentIndex;
+
+      if (e.key === "ArrowDown" || e.key === "j") {
+        nextIndex = currentIndex < visibleCards.length - 1 ? currentIndex + 1 : 0;
+      } else if (e.key === "ArrowUp" || e.key === "k") {
+        nextIndex = currentIndex > 0 ? currentIndex - 1 : visibleCards.length - 1;
+      }
+
+      if (nextIndex >= 0 && nextIndex < visibleCards.length) {
+        e.preventDefault();
+        const nextCard = visibleCards[nextIndex];
+        const nextId = nextCard.dataset.threadId;
+        if (nextId) {
+          setThreadHash(nextId);
+          nextCard.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }
+      }
+    }
+  });
 
   // Visibility Change Handling: Pause polling when tab is hidden
   document.addEventListener("visibilitychange", function () {
