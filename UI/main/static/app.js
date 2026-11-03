@@ -730,6 +730,17 @@
       card.appendChild(detRow);
       card.appendChild(createEl("div", "alert-cmd", item.details));
     }
+
+    if (dec === "pending" && item.approval_url) {
+      const footer = createEl("div", "action-footer");
+      const decideBtn = createEl("a", "action-decision-btn", "Review decision →");
+      decideBtn.href = item.approval_url;
+      decideBtn.target = "_blank";
+      decideBtn.rel = "noopener noreferrer";
+      footer.appendChild(decideBtn);
+      card.appendChild(footer);
+    }
+
     return card;
   }
 

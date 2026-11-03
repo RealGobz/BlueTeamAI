@@ -178,6 +178,20 @@ class TestProcessTools(unittest.TestCase):
         self.assertEqual(len(grouped["registry"]), 1)
         self.assertEqual(grouped["registry"][0]["TargetObject"], "HKLM\\Software\\Run")
 
+    def test_fetch_events_for_process_numeric_pid(self):
+        grouped = fetch_events_for_process("200", db_path=self.test_db_path)
+        self.assertGreaterEqual(len(grouped["process"]), 1)
+        self.assertEqual(len(grouped["network"]), 1)
+        self.assertEqual(len(grouped["file"]), 1)
+
+    def test_fetch_events_for_process_descendants(self):
+        grouped = fetch_events_for_process("{guid-parent}", db_path=self.test_db_path)
+        self.assertGreaterEqual(len(grouped["process"]), 1)
+        self.assertEqual(len(grouped["network"]), 1)
+        self.assertEqual(grouped["network"][0]["DestinationIp"], "192.168.1.50")
+        self.assertEqual(len(grouped["file"]), 1)
+        self.assertEqual(grouped["file"][0]["TargetFilename"], "C:\\Users\\Temp\\payload.bin")
+
     def test_fetch_events_in_window(self):
         events = fetch_events_in_window(
             start="2026-10-27T10:08:00",
@@ -1125,6 +1139,7 @@ class TestProcessTools(unittest.TestCase):
                 dry_run=False,
                 db_path=self.test_db_path,
                 audit_path=self.test_audit_path,
+                enforce_tree=True,
             )
             self.assertEqual(res["status"], "not_allowed_target")
             self.assertIn("not in the alert's process tree", res["reason"])
@@ -1354,6 +1369,8 @@ class TestProcessTools(unittest.TestCase):
         grandchild_guid = "{grandchild-guid-0003}"
         unrelated_guid = "{unrelated-guid-0004}"
 
+        sibling_guid = "{sibling-guid-0005}"
+
         events = [
             {
                 "EventID": 1,
@@ -1361,6 +1378,13 @@ class TestProcessTools(unittest.TestCase):
                 "ParentProcessGuid": "{parent-of-root}",
                 "ProcessId": 1001,
                 "Image": "cmd.exe",
+            },
+            {
+                "EventID": 1,
+                "ProcessGuid": sibling_guid,
+                "ParentProcessGuid": "{parent-of-root}",
+                "ProcessId": 1005,
+                "Image": "powershell.exe",
             },
             {
                 "EventID": 1,
@@ -1392,6 +1416,8 @@ class TestProcessTools(unittest.TestCase):
         self.assertTrue(is_in_alert_tree(child_guid, root_guid, db_path=self.test_db_path))
         # Grandchild is in tree
         self.assertTrue(is_in_alert_tree(grandchild_guid, root_guid, db_path=self.test_db_path))
+        # Sibling sharing same parent process is in tree
+        self.assertTrue(is_in_alert_tree(sibling_guid, root_guid, db_path=self.test_db_path))
         # Unrelated is NOT in tree
         self.assertFalse(is_in_alert_tree(unrelated_guid, root_guid, db_path=self.test_db_path))
         # Parent / ancestor of alert process IS in tree (e.g. launcher shell like PowerShell)
@@ -1679,6 +1705,7 @@ class TestProcessTools(unittest.TestCase):
             db_path=self.test_db_path,
             quarantine_dir=self.test_quarantine_dir,
             audit_path=self.test_audit_path,
+            enforce_tree=True,
         )
         self.assertEqual(res["status"], "not_allowed_target")
         self.assertTrue(os.path.exists(unlinked_path))
@@ -1747,6 +1774,19 @@ class TestProcessTools(unittest.TestCase):
                 audit_path=self.test_audit_path,
             )
             self.assertEqual(res["status"], "blocked_protected")
+
+    def test_quarantine_11b_hackathon_files_allowed(self):
+        from config import ROOT_DIR
+        hackathon_sample = os.path.join(str(ROOT_DIR), "hackathon", "runs", "run_test_sample.ps1")
+        is_prot, reason = check_protected_file(hackathon_sample)
+        self.assertFalse(is_prot)
+        self.assertEqual(reason, "")
+
+        # But core repo files must remain protected
+        core_file = os.path.join(str(ROOT_DIR), "utils.py")
+        is_prot_core, reason_core = check_protected_file(core_file)
+        self.assertTrue(is_prot_core)
+        self.assertIn("Protected project workspace file", reason_core)
 
     def test_quarantine_12_folder_and_wildcard(self):
         guid = "{cccc1111-2222-3333-4444-555555555555}"

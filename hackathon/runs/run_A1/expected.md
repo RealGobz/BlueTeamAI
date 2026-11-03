@@ -1,0 +1,1 @@
+true positive, high confidence, response taken "killing and quarantinning the file"

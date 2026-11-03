@@ -132,7 +132,7 @@ def agent_node(state: AgentState):
         except Exception as e:
             err_str = str(e)
             if ("429" in err_str or "RateLimit" in type(e).__name__ or "rate limit" in err_str.lower()) and attempt < 3:
-                wait_time = (attempt + 1) * 3
+                wait_time = (attempt + 1) * 10
                 time.sleep(wait_time)
             else:
                 raise

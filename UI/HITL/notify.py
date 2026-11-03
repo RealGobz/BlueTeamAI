@@ -31,7 +31,22 @@ def _sanitize_toast_text(text: str, max_len: int = 100) -> str:
     return cleaned
 
 
-def send_toast(title: str, message: str, url: str) -> bool:
+import uuid
+
+
+def _ensure_winotify_priority(winotify_mod: Any) -> None:
+    """Ensure winotify template uses High Priority so Windows does not suppress toasts."""
+    try:
+        if hasattr(winotify_mod, "TEMPLATE") and "$Toast.Priority" not in winotify_mod.TEMPLATE:
+            winotify_mod.TEMPLATE = winotify_mod.TEMPLATE.replace(
+                '$Toast.Group = "{group}"',
+                '$Toast.Group = "{group}"\n$Toast.Priority = [Windows.UI.Notifications.ToastNotificationPriority]::High',
+            )
+    except Exception:
+        pass
+
+
+def send_toast(title: str, message: str, url: str, tag: str | None = None) -> bool:
     """
     Send a Windows toast notification pointing to the HITL approval page.
 
@@ -43,6 +58,9 @@ def send_toast(title: str, message: str, url: str) -> bool:
         Short description (e.g. alert title or turn limit summary)
     url: str
         Local loopback URL to the approval/continue page
+    tag: str | None
+        Unique identifier for the notification to prevent Windows from
+        silently dropping or deduplicating sequential toasts.
 
     Returns
     -------
@@ -51,6 +69,7 @@ def send_toast(title: str, message: str, url: str) -> bool:
     """
     clean_title = _sanitize_toast_text(title, max_len=64) or "Triagent"
     clean_message = _sanitize_toast_text(message, max_len=100)
+    clean_tag = _sanitize_toast_text(tag, max_len=64) if tag else f"tri_{uuid.uuid4().hex[:12]}"
     safe_url = str(url).strip()
 
     # Safety check: URL must be a loopback address
@@ -61,6 +80,8 @@ def send_toast(title: str, message: str, url: str) -> bool:
     try:
         import winotify
 
+        _ensure_winotify_priority(winotify)
+
         toast = winotify.Notification(
             app_id="Triagent",
             title=clean_title,
@@ -68,6 +89,8 @@ def send_toast(title: str, message: str, url: str) -> bool:
             duration="long",
             launch=safe_url,
         )
+        toast.tag = clean_tag
+        toast.group = "Triagent"
         try:
             toast.add_actions(label="Review Decision", launch=safe_url)
         except Exception:

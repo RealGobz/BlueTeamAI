@@ -80,6 +80,7 @@ class TestHitlAgent(unittest.TestCase):
         self.assertEqual(tool_out.get("status"), "invalid_input")
 
     @patch("agent.agent.request_tool_approval")
+    @patch("utils.ENFORCE_INCIDENT_TREE_CONTAINMENT", True)
     def test_kill_process_precheck_not_in_alert_tree_no_prompt(self, mock_approval):
         # Target GUID not in alert tree should return not_allowed_target without calling human
         target_guid = "{22222222-2222-2222-2222-222222222222}"

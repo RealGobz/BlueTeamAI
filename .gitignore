@@ -39,6 +39,11 @@ htmlcov/
 .tox/
 
 # BlueTeamAI local caches & runtime databases
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
 tools/db/*.db
 tools/db/*.db-journal
 tools/db/*.db-wal
@@ -89,4 +94,4 @@ next steps.md
 Thumbs.db
 ehthumbs.db
 UI/preview/
-UI/brand/*.zip
+UI/brand/*.zip

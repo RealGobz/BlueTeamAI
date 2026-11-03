@@ -29,7 +29,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from config import RESULTS_DB_PATH, HITL_DB_PATH, AUDIT_LOG_PATH, QUARANTINE_AUDIT_LOG_PATH
+from config import RESULTS_DB_PATH, HITL_DB_PATH, HITL_PORT, AUDIT_LOG_PATH, QUARANTINE_AUDIT_LOG_PATH
 from agent.results_db import get_verdicts_for_thread, read_audit_actions_for_thread
 
 
@@ -100,7 +100,7 @@ def get_hitl_requests_for_thread(thread_id: str, db_path: Path | str = HITL_DB_P
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT request_id, thread_id, kind, status, payload_json,
+            SELECT request_id, thread_id, kind, status, payload_json, token,
                    decision, note, created_at, expires_at, decided_at
             FROM hitl_requests
             WHERE thread_id = ?
@@ -352,6 +352,10 @@ def build_timeline_items(
                     if decision == "unknown" and result_status in ("not_allowed_target", "blocked_protected", "invalid_input", "not_found"):
                         decision = "blocked"
 
+                    approval_url = None
+                    if matched_req and decision == "pending" and matched_req.get("token"):
+                        approval_url = f"http://127.0.0.1:{HITL_PORT}/r/{matched_req['request_id']}?t={matched_req['token']}"
+
                     items.append({
                         "id": tc_id,
                         "type": "action",
@@ -362,6 +366,7 @@ def build_timeline_items(
                         "decision": decision,
                         "result": result_status,
                         "details": details,
+                        "approval_url": approval_url,
                     })
                     continue
 

@@ -49,6 +49,7 @@ from config import (
     MEMORY_DIR,
     HITL_DB_PATH,
     ASK_USER_TIMEOUT_SECONDS,
+    ENFORCE_INCIDENT_TREE_CONTAINMENT,
 )
 
 # Standard Windows Event Log XML namespace
@@ -215,6 +216,8 @@ def _check_field_match(
     event_value: Any, pattern: Any, modifier: str | None
 ) -> bool:
     """Check if a single event field value matches a pattern under a given modifier."""
+    if pattern is None:
+        return event_value is None or str(event_value).strip() == ""
     if event_value is None:
         return False
 
@@ -238,11 +241,17 @@ def _evaluate_field(
     """
     Evaluate a field condition like 'Image|endswith' or 'CommandLine|contains'.
     If pattern_or_list is a list, matches if ANY pattern matches (OR logic).
+    If modifiers contain 'all', matches only if ALL patterns match (AND logic).
     """
     if "|" in field_spec:
-        field_name, modifier = field_spec.split("|", 1)
+        parts = field_spec.split("|")
+        field_name = parts[0]
+        modifiers = [p.lower() for p in parts[1:]]
     else:
-        field_name, modifier = field_spec, None
+        field_name = field_spec
+        modifiers = []
+
+    modifier = modifiers[0] if modifiers else None
 
     # Retrieve the event field value (case-insensitive key lookup)
     event_val = None
@@ -252,14 +261,23 @@ def _evaluate_field(
             break
 
     if event_val is None:
+        if pattern_or_list is None:
+            return True, field_name, None
         return False, field_name, None
 
     if isinstance(pattern_or_list, list):
-        # List of values is treated as OR in Sigma
-        for pat in pattern_or_list:
-            if _check_field_match(event_val, pat, modifier):
-                return True, field_name, event_val
-        return False, field_name, event_val
+        if "all" in modifiers:
+            # All values in list must match (AND logic)
+            for pat in pattern_or_list:
+                if not _check_field_match(event_val, pat, modifier):
+                    return False, field_name, event_val
+            return True, field_name, event_val
+        else:
+            # Any value in list matches (standard Sigma OR logic)
+            for pat in pattern_or_list:
+                if _check_field_match(event_val, pat, modifier):
+                    return True, field_name, event_val
+            return False, field_name, event_val
     else:
         matched = _check_field_match(event_val, pattern_or_list, modifier)
         return matched, field_name, event_val
@@ -308,26 +326,6 @@ def _evaluate_condition(
     if cond in block_results:
         return block_results[cond]
 
-    # Pattern: '1 of selection_*' or 'any of selection_*'
-    m_one_of = re.match(r"^(?:1|any)\s+of\s+([a-zA-Z0-9_*]+)$", cond, re.IGNORECASE)
-    if m_one_of:
-        pattern = m_one_of.group(1).replace("*", ".*")
-        matched_blocks = [
-            k for k in block_results if re.match(f"^{pattern}$", k)
-        ]
-        return any(block_results[b] for b in matched_blocks)
-
-    # Pattern: 'all of selection_*'
-    m_all_of = re.match(r"^all\s+of\s+([a-zA-Z0-9_*]+)$", cond, re.IGNORECASE)
-    if m_all_of:
-        pattern = m_all_of.group(1).replace("*", ".*")
-        matched_blocks = [
-            k for k in block_results if re.match(f"^{pattern}$", k)
-        ]
-        if not matched_blocks:
-            return False
-        return all(block_results[b] for b in matched_blocks)
-
     # Pattern: '1 of them'
     if re.match(r"^(?:1|any)\s+of\s+them$", cond, re.IGNORECASE):
         return any(block_results.values())
@@ -336,9 +334,34 @@ def _evaluate_condition(
     if re.match(r"^all\s+of\s+them$", cond, re.IGNORECASE):
         return bool(block_results and all(block_results.values()))
 
+    eval_str = cond
+
+    # Expand 'all of <pattern>' (including wildcards like selection_*)
+    def _replace_all_of(m: re.Match[str]) -> str:
+        pattern = m.group(1).replace("*", ".*")
+        matched = [k for k in block_results if re.match(f"^{pattern}$", k)]
+        if not matched:
+            return "False"
+        return "(" + " and ".join(matched) + ")"
+
+    eval_str = re.sub(
+        r"\ball\s+of\s+([a-zA-Z0-9_*]+)", _replace_all_of, eval_str, flags=re.IGNORECASE
+    )
+
+    # Expand '1 of <pattern>' or 'any of <pattern>'
+    def _replace_one_of(m: re.Match[str]) -> str:
+        pattern = m.group(1).replace("*", ".*")
+        matched = [k for k in block_results if re.match(f"^{pattern}$", k)]
+        if not matched:
+            return "False"
+        return "(" + " or ".join(matched) + ")"
+
+    eval_str = re.sub(
+        r"\b(?:1|any)\s+of\s+([a-zA-Z0-9_*]+)", _replace_one_of, eval_str, flags=re.IGNORECASE
+    )
+
     # Basic boolean evaluation: replace block names with True/False
     # Sort keys by length descending to avoid prefix substitution issues
-    eval_str = cond
     for key in sorted(block_results.keys(), key=len, reverse=True):
         val = str(block_results[key])
         eval_str = re.sub(rf"\b{re.escape(key)}\b", val, eval_str)
@@ -364,6 +387,29 @@ def match_event(
     Check whether a single event matches a Sigma rule.
     Returns (True, match_info) if matched, otherwise (False, None).
     """
+    # Enforce logsource category filtering if EventID is specified
+    logsource = rule.get("logsource", {})
+    category = (logsource.get("category") or "").lower()
+    event_id = event.get("EventID")
+    if event_id is not None and category:
+        try:
+            eid_int = int(event_id)
+        except (ValueError, TypeError):
+            eid_int = None
+        if eid_int is not None:
+            if category == "process_creation" and eid_int not in (1, 4688):
+                return False, None
+            elif category == "process_access" and eid_int != 10:
+                return False, None
+            elif category in ("registry_add", "registry_set", "registry_delete", "registry_event") and eid_int not in (12, 13, 14):
+                return False, None
+            elif category in ("file_event", "file_change") and eid_int not in (11, 23, 26):
+                return False, None
+            elif category == "network_connection" and eid_int != 3:
+                return False, None
+            elif category == "image_load" and eid_int != 7:
+                return False, None
+
     detection = rule.get("detection")
     if not detection or "condition" not in detection:
         return False, None
@@ -646,22 +692,50 @@ def fetch_events_for_process(
 
     conn = sqlite3.connect(str(db_path))
     try:
-        # Also discover direct child process GUIDs (e.g. reg.exe adding Run key)
-        child_cursor = conn.execute(
-            """
-            SELECT json_extract(raw_data, '$.ProcessGuid') FROM events
-            WHERE event_id = 1
-              AND (json_extract(raw_data, '$.ParentProcessGuid') = ? COLLATE NOCASE
-                   OR json_extract(raw_data, '$.ParentProcessGuid') = ? COLLATE NOCASE)
-            """,
-            (g_with_braces, g_without_braces),
-        )
+        # If numeric PID was supplied instead of GUID, resolve it from the latest process event
+        if clean.isdigit():
+            pid_val = int(clean)
+            pid_row = conn.execute(
+                """
+                SELECT json_extract(raw_data, '$.ProcessGuid') FROM events
+                WHERE (process_id = ? OR json_extract(raw_data, '$.ProcessId') = ?)
+                  AND json_extract(raw_data, '$.ProcessGuid') IS NOT NULL
+                ORDER BY id DESC LIMIT 1
+                """,
+                (pid_val, pid_val),
+            ).fetchone()
+            if pid_row and pid_row[0]:
+                clean = str(pid_row[0]).strip()
+                g_with_braces = clean if clean.startswith("{") else f"{{{clean}}}"
+                g_without_braces = clean.strip("{}")
+
+        # Discover all descendant process GUIDs recursively (e.g. child reg.exe, grandchild ping)
         all_guids = {g_with_braces, g_without_braces}
-        for (cg,) in child_cursor.fetchall():
-            if cg:
-                c_clean = str(cg).strip()
-                all_guids.add(c_clean if c_clean.startswith("{") else f"{{{c_clean}}}")
-                all_guids.add(c_clean.strip("{}"))
+        current_level_guids = {g_with_braces, g_without_braces}
+        for _ in range(5):
+            if not current_level_guids:
+                break
+            ph = ", ".join(["?"] * len(current_level_guids))
+            child_cursor = conn.execute(
+                f"""
+                SELECT json_extract(raw_data, '$.ProcessGuid') FROM events
+                WHERE event_id = 1
+                  AND json_extract(raw_data, '$.ParentProcessGuid') IN ({ph}) COLLATE NOCASE
+                """,
+                list(current_level_guids),
+            )
+            next_level_guids = set()
+            for (cg,) in child_cursor.fetchall():
+                if cg:
+                    c_clean = str(cg).strip()
+                    c_wb = c_clean if c_clean.startswith("{") else f"{{{c_clean}}}"
+                    c_wob = c_clean.strip("{}")
+                    if c_wb not in all_guids:
+                        all_guids.add(c_wb)
+                        all_guids.add(c_wob)
+                        next_level_guids.add(c_wb)
+                        next_level_guids.add(c_wob)
+            current_level_guids = next_level_guids
 
         placeholders = ", ".join(["?"] * len(all_guids))
         guid_list = list(all_guids)
@@ -1368,7 +1442,18 @@ def fetch_live_connections(
                 "returned_connections": 0,
                 "connections": [],
             }
-        raw_conns = get_conns()
+        raw_conns = list(get_conns())
+        # Also inspect running children to capture connections made by spawned tools (e.g. certutil, curl)
+        try:
+            for child_proc in proc.children(recursive=True):
+                try:
+                    c_get_conns = getattr(child_proc, "net_connections", getattr(child_proc, "connections", None))
+                    if c_get_conns:
+                        raw_conns.extend(c_get_conns())
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
     except psutil.AccessDenied:
         return {
             "guid": resolved["guid"],
@@ -2162,6 +2247,12 @@ def is_in_alert_tree(
             visited.add(p)
             curr = p
 
+        # 3. Check if target_guid and alert_guid are siblings (share the same parent process)
+        p_alert = get_parent(alert_norm)
+        p_target = get_parent(target_norm)
+        if p_alert and p_target and p_alert == p_target:
+            return True
+
         return False
     finally:
         conn.close()
@@ -2291,6 +2382,7 @@ def terminate_process(
     db_path: Path | str = DB_PATH,
     audit_path: Path | str = AUDIT_LOG_PATH,
     thread_id: str | None = None,
+    enforce_tree: bool | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """
@@ -2380,8 +2472,20 @@ def terminate_process(
         }, audit_path=audit_path)
         return result
 
-    # 3. Tree containment check (must be alert process itself or something it launched)
-    if not alert_guid or not is_in_alert_tree(guid_str, alert_guid, db_path=db_path):
+    effective_enforce_tree = ENFORCE_INCIDENT_TREE_CONTAINMENT if enforce_tree is None else enforce_tree
+
+    # 3. Tree containment check (bypassed for MVP unless enforce_tree is enabled)
+    # Always allow processes associated with the hackathon folder to be terminated
+    is_hackathon_proc = False
+    try:
+        hackathon_dir = os.path.normcase(os.path.realpath(str(ROOT_DIR / "hackathon")))
+        norm_img = os.path.normcase(os.path.realpath(target_image)) if target_image else ""
+        if "hackathon" in cmd_line.lower() or (norm_img and (norm_img == hackathon_dir or norm_img.startswith(hackathon_dir + os.sep))):
+            is_hackathon_proc = True
+    except Exception:
+        pass
+
+    if effective_enforce_tree and not is_hackathon_proc and (not alert_guid or not is_in_alert_tree(guid_str, alert_guid, db_path=db_path)):
         result = {
             "guid": guid_str,
             "status": "not_allowed_target",
@@ -2740,6 +2844,11 @@ def check_protected_file(
     except Exception:
         norm = os.path.normcase(os.path.normpath(path))
 
+    # 0. Allow anything inside the hackathon directory to be quarantined / neutralized
+    hackathon_dir = os.path.normcase(os.path.realpath(str(ROOT_DIR / "hackathon")))
+    if norm == hackathon_dir or norm.startswith(hackathon_dir + os.sep):
+        return False, ""
+
     # 1. Windows core system directories
     system_root = os.path.normcase(os.path.realpath(os.environ.get("SystemRoot", r"C:\Windows")))
     system32 = os.path.normcase(os.path.join(system_root, "system32"))
@@ -2792,7 +2901,7 @@ def check_protected_file(
             return True, f"Protected audit log file: '{norm}'."
 
     if norm == proj_root or norm.startswith(proj_root + os.sep):
-        # Inside project root
+        # Inside project root (excluding hackathon which returned False above)
         return True, f"Protected project workspace file: '{norm}'."
 
     return False, ""
@@ -3283,6 +3392,7 @@ def quarantine_file_action(
     quarantine_dir: Path | str = QUARANTINE_DIR,
     audit_path: Path | str = QUARANTINE_AUDIT_LOG_PATH,
     thread_id: str | None = None,
+    enforce_tree: bool | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """
@@ -3463,51 +3573,71 @@ def quarantine_file_action(
         }, audit_path=audit_path)
         return result
 
-    # 4. Link to alert check
-    if not alert_guid:
-        result = {
-            "path": real_path,
-            "status": "not_allowed_target",
-            "sha256": None,
-            "quarantine_path": None,
-            "reason": "File is not linked to alert (no alert GUID provided).",
-        }
-        log_audit_quarantine({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "alert_id": alert_id or "unknown",
-            "original_path": real_path,
-            "sha256": None,
-            "reason": reason,
-            "approved": approved,
-            "approver": "human" if approved else "none",
-            "status": "not_allowed_target",
-            "dry_run": effective_dry_run,
-            "details": result["reason"],
-        }, audit_path=audit_path)
-        return result
+    effective_enforce_tree = ENFORCE_INCIDENT_TREE_CONTAINMENT if enforce_tree is None else enforce_tree
 
-    is_linked, expected_hash, link_details = is_file_linked_to_alert(real_path, alert_guid, db_path=db_path)
-    if not is_linked:
-        result = {
-            "path": real_path,
-            "status": "not_allowed_target",
-            "sha256": None,
-            "quarantine_path": None,
-            "reason": f"File '{real_path}' is not linked to alert '{alert_guid}' or its process tree.",
-        }
-        log_audit_quarantine({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "alert_id": alert_id or "unknown",
-            "original_path": real_path,
-            "sha256": None,
-            "reason": reason,
-            "approved": approved,
-            "approver": "human" if approved else "none",
-            "status": "not_allowed_target",
-            "dry_run": effective_dry_run,
-            "details": result["reason"],
-        }, audit_path=audit_path)
-        return result
+    # 4. Link to alert check (bypassed for MVP unless enforce_tree is enabled)
+    # Always allow simulation files inside hackathon directory to be quarantined
+    is_in_hackathon_dir = False
+    try:
+        hackathon_dir = os.path.normcase(os.path.realpath(str(ROOT_DIR / "hackathon")))
+        norm_fp = os.path.normcase(os.path.realpath(real_path))
+        if norm_fp == hackathon_dir or norm_fp.startswith(hackathon_dir + os.sep):
+            is_in_hackathon_dir = True
+    except Exception:
+        pass
+
+    expected_hash = None
+    if effective_enforce_tree and not is_in_hackathon_dir:
+        if not alert_guid:
+            result = {
+                "path": real_path,
+                "status": "not_allowed_target",
+                "sha256": None,
+                "quarantine_path": None,
+                "reason": "File is not linked to alert (no alert GUID provided).",
+            }
+            log_audit_quarantine({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "alert_id": alert_id or "unknown",
+                "original_path": real_path,
+                "sha256": None,
+                "reason": reason,
+                "approved": approved,
+                "approver": "human" if approved else "none",
+                "status": "not_allowed_target",
+                "dry_run": effective_dry_run,
+                "details": result["reason"],
+            }, audit_path=audit_path)
+            return result
+
+        is_linked, expected_hash, link_details = is_file_linked_to_alert(real_path, alert_guid, db_path=db_path)
+        if not is_linked:
+            result = {
+                "path": real_path,
+                "status": "not_allowed_target",
+                "sha256": None,
+                "quarantine_path": None,
+                "reason": f"File '{real_path}' is not linked to alert '{alert_guid}' or its process tree.",
+            }
+            log_audit_quarantine({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "alert_id": alert_id or "unknown",
+                "original_path": real_path,
+                "sha256": None,
+                "reason": reason,
+                "approved": approved,
+                "approver": "human" if approved else "none",
+                "status": "not_allowed_target",
+                "dry_run": effective_dry_run,
+                "details": result["reason"],
+            }, audit_path=audit_path)
+            return result
+    else:
+        if alert_guid:
+            try:
+                _, expected_hash, _ = is_file_linked_to_alert(real_path, alert_guid, db_path=db_path)
+            except Exception:
+                expected_hash = None
 
     # 5. Hash calculation and comparison
     try:

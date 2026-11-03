@@ -466,9 +466,10 @@ def request_tool_approval(
         from UI.HITL.notify import send_toast
         rule_title = str(payload["alert_title"])[:100]
         send_toast(
-            title="Triagent: approval needed",
+            title=f"Triagent: Approve {tool_name}",
             message=f"{rule_title} - Click to approve or reject",
             url=url,
+            tag=req["request_id"],
         )
     except Exception as e:
         print(f"[!] Notification dispatch error: {e}")
@@ -556,9 +557,10 @@ def request_continue(
     try:
         from UI.HITL.notify import send_toast
         send_toast(
-            title="Triagent: continue?",
+            title="Triagent: Continue Investigation?",
             message="The AI investigator needs approval to continue.",
             url=url,
+            tag=req["request_id"],
         )
     except Exception:
         pass
@@ -649,9 +651,10 @@ def request_ask_user(
         from UI.HITL.notify import send_toast
         rule_title = str(payload["alert_title"])[:100]
         send_toast(
-            title="Triagent: question for you",
+            title="Triagent: Question for you",
             message=rule_title,
             url=url,
+            tag=req["request_id"],
         )
     except Exception as e:
         print(f"[!] Notification dispatch error: {e}")

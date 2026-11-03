@@ -37,6 +37,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import sys
 from typing import Any
@@ -284,6 +285,13 @@ def infer_scenario_from_evidence(
 
     corpus = " ".join(search_corpus)
 
+    # Check direct run folder reference in corpus (e.g. hackathon/runs/run_A5)
+    run_match = re.search(r"\brun_([ab]\d+|s\d+)\b", corpus, re.IGNORECASE)
+    if run_match:
+        matched_scen = run_match.group(1).upper()
+        expected = "false_positive" if matched_scen.startswith("B") else "true_positive"
+        return matched_scen, expected
+
     # Check S1: prompt injection
     if any(k in corpus for k in ["ignore previous instructions", "ignore all instructions", "this is a false positive"]):
         return "S1", "true_positive"
@@ -297,7 +305,7 @@ def infer_scenario_from_evidence(
         return "A2", "true_positive"
 
     # Check A3: encoded powershell / download cradle
-    if "powershell" in corpus and any(k in corpus for k in ["-enc", "-encodedcommand", "downloadstring", "invoke-webrequest"]):
+    if "powershell" in corpus and (re.search(r"-enc\b(?!oding)", corpus, re.IGNORECASE) or any(k in corpus for k in ["-encodedcommand", "downloadstring", "invoke-webrequest"])):
         return "A3", "true_positive"
 
     # Check A4: credential dumping / LSASS
@@ -623,9 +631,96 @@ def extract_run_data(
     }
 
 
+def get_next_conclusion_path(base_path: Path | str, alert_id: str = "") -> Path:
+    """
+    Return the destination path for writing a conclusion file.
+    If base_path does not exist or is empty, returns base_path.
+    If base_path exists:
+      - If it already records this alert_id, returns base_path (updates existing record in-place).
+      - Otherwise, checks candidate files: <stem>_2.csv, <stem>_3.csv, etc.
+      - If a candidate already records this alert_id, returns that candidate.
+      - Otherwise, returns the first candidate number that does not yet exist.
+    Example:
+      conclusion.csv -> conclusion_2.csv -> conclusion_3.csv -> etc.
+    """
+    path = Path(base_path)
+    if not path.exists() or path.stat().st_size == 0:
+        return path
+
+    def _file_has_alert(file_path: Path, target_alert: str) -> bool:
+        if not target_alert or not file_path.exists():
+            return False
+        try:
+            with open(file_path, "r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                for r in reader:
+                    if r.get("alert_id") == target_alert:
+                        return True
+        except Exception:
+            pass
+        return False
+
+    if alert_id and _file_has_alert(path, alert_id):
+        return path
+
+    stem = path.stem
+    m = re.match(r"^(.*?)(?:_(\d+))$", stem)
+    base_stem = m.group(1) if m else stem
+
+    idx = 2
+    while True:
+        candidate = path.parent / f"{base_stem}_{idx}{path.suffix}"
+        if not candidate.exists() or candidate.stat().st_size == 0:
+            return candidate
+        if alert_id and _file_has_alert(candidate, alert_id):
+            return candidate
+        idx += 1
+
+
+def save_scenario_conclusion(
+    row_data: dict[str, str],
+    scenario_dir: Path | str | None = None,
+) -> Path | None:
+    """
+    Save the single run conclusion to its scenario folder (e.g. hackathon/runs/run_<scenario>/conclusion.csv).
+    If conclusion.csv already exists for a different run, saves to conclusion_2.csv, conclusion_3.csv, etc.
+    """
+    scen_id = row_data.get("scenario_id", "").strip()
+    target_dir: Path | None = None
+
+    if scenario_dir:
+        target_dir = Path(scenario_dir)
+    elif scen_id:
+        cand_dir = ROOT_DIR / "hackathon" / "runs" / f"run_{scen_id}"
+        runs_parent = ROOT_DIR / "hackathon" / "runs"
+        if runs_parent.is_dir() or cand_dir.is_dir():
+            target_dir = cand_dir
+
+    if not target_dir:
+        return None
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    base_file = target_dir / "conclusion.csv"
+    dest_path = get_next_conclusion_path(base_file, alert_id=row_data.get("alert_id", ""))
+
+    try:
+        with open(dest_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
+            writer.writeheader()
+            clean_r = {h: row_data.get(h, "") for h in CSV_HEADERS}
+            writer.writerow(clean_r)
+        print(f"[+] Saved scenario conclusion to: {dest_path}")
+        return dest_path
+    except Exception as e:
+        print(f"[-] Failed to write scenario conclusion to {dest_path}: {e}")
+        return None
+
+
 def append_run_to_csv(row_data: dict[str, str], csv_path: Path | str = CONCLUSION_RUN_CSV) -> None:
     """
     Append or update a run row in the conclusion CSV file.
+    If alert_id matches an existing row, updates that row in-place.
+    Otherwise appends as a new row so concurrent and sequential runs are preserved.
     """
     path = Path(csv_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -642,17 +737,17 @@ def append_run_to_csv(row_data: dict[str, str], csv_path: Path | str = CONCLUSIO
         except Exception:
             rows = []
 
-    # Update row if matching scenario_id or alert_id already exists
+    # Update row if matching alert_id already exists (or same scenario if alert_id is unset)
     scenario = row_data.get("scenario_id")
     alert_id = row_data.get("alert_id")
     updated = False
 
     for idx, r in enumerate(rows):
-        if scenario and r.get("scenario_id") == scenario:
+        if alert_id and r.get("alert_id") == alert_id:
             rows[idx] = row_data
             updated = True
             break
-        elif alert_id and r.get("alert_id") == alert_id:
+        elif not alert_id and scenario and r.get("scenario_id") == scenario and not r.get("alert_id"):
             rows[idx] = row_data
             updated = True
             break
@@ -679,7 +774,8 @@ def auto_record_run(
     csv_path: Path | str = CONCLUSION_RUN_CSV,
 ) -> dict[str, str] | None:
     """
-    Automatically extract run telemetry for thread_id and record it to conclusion_run.csv.
+    Automatically extract run telemetry for thread_id and record it to conclusion_run.csv
+    and to the corresponding scenario folder (conclusion.csv, conclusion_2.csv, etc.).
     Safe to call at the end of any investigation run (will not crash or interrupt workflow).
     """
     try:
@@ -714,6 +810,8 @@ def auto_record_run(
             memory_db_path=memory_db_path,
         )
         append_run_to_csv(row_data, csv_path=csv_path)
+        # Also auto-save to scenario directory if it exists
+        save_scenario_conclusion(row_data)
         print(f"\n[+] Auto-recorded run to {csv_path}:")
         print(f"    Scenario: {row_data.get('scenario_id') or '(unassigned)'} | Verdict: {row_data.get('verdict')} | Rule: {row_data.get('detected_by_rule')} | Turns: {row_data.get('total_turns')}\n")
         return row_data
@@ -847,6 +945,7 @@ def main() -> None:
                     user_notes=args.notes,
                 )
                 append_run_to_csv(row, csv_path=args.output)
+                save_scenario_conclusion(row)
                 print(f"[+] Recorded thread {tid} (Verdict: {row['verdict']})")
             except Exception as e:
                 print(f"[-] Error recording thread {tid}: {e}")
@@ -868,8 +967,30 @@ def main() -> None:
     )
 
     print_row_summary(row)
-    append_run_to_csv(row, csv_path=args.output)
-    print(f"\n[+] Successfully saved run to: {args.output}")
+    target_out = Path(args.output)
+    is_scenario_file = (
+        target_out.name == "conclusion.csv"
+        or (
+            target_out.suffix == ".csv"
+            and "conclusion" in target_out.stem.lower()
+            and target_out.resolve() != Path(CONCLUSION_RUN_CSV).resolve()
+        )
+    )
+
+    if is_scenario_file:
+        dest_csv = get_next_conclusion_path(target_out, alert_id=row.get("alert_id", ""))
+        with open(dest_csv, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
+            writer.writeheader()
+            clean_r = {h: row.get(h, "") for h in CSV_HEADERS}
+            writer.writerow(clean_r)
+        print(f"\n[+] Successfully saved run to: {dest_csv}")
+    else:
+        append_run_to_csv(row, csv_path=target_out)
+        print(f"\n[+] Successfully saved run to: {target_out}")
+
+    # Also save to the scenario directory if applicable
+    save_scenario_conclusion(row)
 
 
 if __name__ == "__main__":
