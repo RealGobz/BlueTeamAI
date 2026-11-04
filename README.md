@@ -1,193 +1,152 @@
-# BlueTeamAI 🛡️
+# Triagent
 
-**Autonomous Blue Team Security Investigator Agent for Windows Endpoint Defense**
+> **"What if every alert came with an answer?"**  
+> *An AI security analyst that investigates Windows alerts, and asks before it acts.*
 
-BlueTeamAI is an autonomous, agentic cybersecurity analyst designed to investigate, triage, and mitigate Windows endpoint security alerts in real time. Built with **LangGraph**, **Microsoft Sysmon**, **Sigma Detection Rules**, and **Azure AI Foundry**, BlueTeamAI bridges the gap between raw detection and actionable, evidence-backed security decisions.
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Platform: Windows](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20%7C%20Server-0078D6.svg)](https://www.microsoft.com/windows)
+[![Engine: LangGraph](https://img.shields.io/badge/Agent-LangGraph-FF6F00.svg)](https://github.com/langchain-ai/langgraph)
+[![Research: Benchmark](https://img.shields.io/badge/Research-10%20Scenario%20Benchmark-brightgreen.svg)](https://realgobz.github.io/Triagent-Research/)
 
----
-
-## 🚀 Key Capabilities
-
-- **Real-Time Detection & Event Streaming**: Ingests and parses live Windows event logs via Microsoft Sysmon with 24-hour historical event correlation.
-- **600+ Sigma Rules Built-In**: Pre-compiled and indexed open-source Sigma detection rules for high and critical process-creation behaviors.
-- **Autonomous Forensic Investigation**: Guided by an investigative playbook with 12 distinct tools:
-  - Process tree & ancestry reconstruction (`get_process_tree`, `get_children`)
-  - Historical process event queries & prevalence checks (`get_events_for_process`, `get_events_by_hash`)
-  - Incident window temporal correlation (`get_events_in_window`)
-  - On-disk binary inspection & hash matching (`get_file_info`)
-  - Authenticode digital signature verification (`get_file_signature`)
-  - Live process liveness & network socket inspection (`is_process_running`, `get_live_connections`)
-  - Global reputation lookups via VirusTotal (`lookup_hash`)
-  - Threat intelligence & LOLBAS research via Exa AI (`exa_search`)
-- **Strict Evidence Validation & Anti-Hallucination**: Verdicts must cite evidence directly derived from executed tools. Revisions are versioned in an append-only database.
-- **Human-In-The-Loop (HITL) Containment Gate**: Critical containment actions (`kill_process`, `quarantine_file`) require operator approval, with built-in OS protection for core Windows binaries.
-- **Interactive Chat Web UI**: Real-time investigation timeline, live event cards, HITL approvals, and interactive operator chat on `http://127.0.0.1:8766`.
-- **Automated Research Telemetry**: Generates evaluation metrics (turns, token costs, duration, tools used, verdict accuracy) into `tools/db/conclusion_run.csv`.
+Triagent is an autonomous, agentic cybersecurity analyst designed to investigate, triage, and remediate Windows endpoint security alerts in real time. Operating locally on the endpoint, Triagent bridges the gap between raw detection and evidence-backed triage by executing deep forensic investigations, validating digital signatures, correlating process trees, and consulting a human operator before taking critical containment actions.
 
 ---
 
-## 🏛️ System Architecture
+## ⚡ Quick Start (For Judges & Evaluators)
+
+To start Triagent from a clean clone, open **PowerShell as Administrator** and run:
+
+```powershell
+# 1. Clone the repository
+git clone https://github.com/RealGobz/Triagent.git
+cd Triagent
+
+# 2. Run the all-in-one setup launcher
+.\setup.bat
+```
+
+> [!NOTE]
+> `setup.bat` (or `powershell -ExecutionPolicy Bypass -File .\setup.ps1`) is **fully autonomous**:
+> 1. Creates `.venv` and installs all dependencies (`requirements.txt`).
+> 2. Downloads, configures, and starts **Microsoft Sysmon** with the SwiftOnSecurity detection configuration.
+> 3. Indexes 600+ open-source **Sigma detection rules**.
+> 4. Connects to Azure AI Foundry via Azure CLI (`az login` if needed) and **automatically fills `.env`**.
+> 5. **Directly starts the live event watcher and Web UI** on [http://127.0.0.1:8766](http://127.0.0.1:8766)!
+
+Once running, visit **[http://127.0.0.1:8766](http://127.0.0.1:8766)** in your browser to view the live investigation dashboard, review forensic tool executions, and interact directly with the agent.
+
+---
+
+## 🏛️ How It Works
+
+Triagent operates in three streamlined phases:
 
 ```text
-[ Microsoft-Windows-Sysmon ]
-           │ (Live Event Stream)
-           ▼
-[ detection/watch.py ] ──► [ detection/record.py ] ──► tools/db/events.db (24h Retention)
-           │
-           ├─► Custom Sigma Engine (619 Rules)
-           │          │
-           │          ▼ (Alert Matched)
-           │   [ agent/agent.py (LangGraph) ]
-           │          │
-           │          ├─► Forensic Tools (Tree, Signatures, VT, Exa AI, Sockets)
-           │          ├─► Human-In-The-Loop Gate (kill_process, quarantine_file)
-           │          └─► Verdict Engine (Strict Evidence & Anti-Hallucination)
-           ▼
-[ UI/main/server.py ] ◄──► [ tools/db/results.db ] + [ tools/db/conclusion_run.csv ]
-   (Web Dashboard & Chat)
+Detection (Sysmon + Sigma) ──► Agent Forensics (LangGraph + Tools) ──► Verdict & HITL in Web UI
 ```
+
+1. **Detection**: Microsoft Sysmon streams endpoint events into a local 24-hour event retention database. A native Sigma engine continuously matches incoming process-creation telemetry against 600+ threat detection rules.
+2. **Agent Forensics**: When a rule fires, Triagent formulates an investigation plan and autonomously executes specialized forensic tools:
+   - Reconstructs full process ancestry and descendant process trees (`get_process_tree`, `get_children`).
+   - Verifies Microsoft Authenticode digital signatures on disk binaries (`get_file_signature`).
+   - Correlates incident time windows and local hash prevalence (`get_events_in_window`, `get_events_by_hash`).
+   - Inspects active process liveness and open network sockets (`is_process_running`, `get_live_connections`).
+   - Queries global threat intelligence (VirusTotal & Exa AI) and Sigma rule logic context.
+3. **Verdict & HITL Containment**: Triagent constructs an evidence-grounded verdict (`true_positive` vs `false_positive`). If high-impact containment is required (e.g. `kill_process` or `quarantine_file`), the agent halts and requests operator approval via interactive desktop and Web UI Human-in-the-Loop (HITL) prompts.
 
 ---
 
-## 📋 Prerequisites
+## ⚙️ Configuration (`.env`)
 
-1. **Operating System**: Windows 10, Windows 11, or Windows Server (or a Windows VM in VMware, VirtualBox, or Hyper-V).
-2. **Permissions**: Administrator privileges (required to install Sysmon and listen to the live Sysmon event channel).
-3. **Python & Git**: Python 3.10+ and Git for Windows.
-4. **Azure AI Foundry Account**: An Azure subscription with an AI Foundry project (`agent_llm` deployment).
+The setup script automatically populates your `.env` configuration file with your Azure project endpoint and UI ports.
 
-> [!TIP]
-> **On a fresh, raw Windows 11 VM**, open PowerShell as Administrator and run:
-> ```powershell
-> winget install -e --id Git.Git Python.Python.3.12 --accept-package-agreements --accept-source-agreements
-> ```
-> Restart PowerShell to refresh your PATH, and you're ready to clone!
-
----
-
-## ⚡ Quick Start
-
-### 1. Clone the Repository
-```powershell
-git clone https://github.com/RealGobz/BlueTeamAI.git
-cd BlueTeamAI
-```
-
-### 2. Run All-In-One Setup & Start Watcher
-Run `setup.bat` in Windows (or `setup.sh` in Git Bash):
-```powershell
-# Windows CMD or PowerShell (Zero friction - automatically bypasses execution policy):
-.\setup.bat -Scenario A1
-
-# Or in PowerShell directly:
-powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Scenario A1
-
-# Or in Git Bash:
-bash setup.sh --scenario A1
-```
-The script is 100% autonomous and executes everything in sequence:
-- Installs Python 3.12 & dependencies into `.venv`.
-- Downloads, installs, and starts Microsoft Sysmon with the SwiftOnSecurity configuration.
-- Downloads 600+ Sigma detection rules and offline attack samples.
-- **Checks/Installs Azure CLI** (`az`) and prompts `az login` if not already authenticated (required by `DefaultAzureCredential`).
-- Auto-discovers and configures your `PROJECT_ENDPOINT` in `.env`.
-- **Directly starts the live watcher (`detection/watch.py`) and Web UI (`http://127.0.0.1:8766`)**!
-*(To only run setup without starting the watcher immediately, pass `--no-watch` or `-NoWatch`).*
-
-### 3. Configure Credentials (`.env`)
-Copy `.env.example` to `.env` if not already created, and configure your Azure AI Foundry endpoint:
 ```env
-# Azure AI Foundry Configuration
+# Automatically configured by setup script:
 PROJECT_ENDPOINT=https://<your-hub>-aiservices.services.ai.azure.com/api/projects/<your-project>
 LLM_DEPLOYMENT_NAME=agent_llm
-
-# External Threat Intelligence (Optional)
-VT_API_KEY=your_virustotal_api_key
-EXAAI_SEARCH_API_KEY=your_exa_api_key
-
-# UI & Safety Settings
 HITL_MODE=web
 HITL_PORT=8765
 UI_MAIN_PORT=8766
 DRY_RUN=false
+
+# Optional external threat intelligence (add manually if available):
+VT_API_KEY=your_virustotal_api_key
+EXAAI_SEARCH_API_KEY=your_exa_api_key
 ```
+
+*(External keys for VirusTotal and Exa AI are optional; if omitted, Triagent gracefully uses local file inspection, digital signatures, hash prevalence, and rule context).*
 
 ---
 
-## 🔍 Running BlueTeamAI
+## 🔍 Running Triagent Manually
 
-### Start the Live Watcher
+If you have already run the setup script and wish to start components independently:
+
+### 1. Start the Live Event Watcher
 In an **Administrator** console:
-```bash
+```powershell
 .\.venv\Scripts\python detection/watch.py
 ```
-To tag investigations for a specific test scenario (e.g. `A1`):
-```bash
-.\.venv\Scripts\python detection/watch.py --scenario A1
-```
+*(The watcher listens to live Sysmon telemetry, triggers investigations upon rule detection, and automatically starts the Web UI server in the background).*
 
-### Open the Investigation Web UI
-The watcher automatically starts the UI server in the background, or you can launch it independently:
-```bash
+### 2. Open the Web Dashboard
+Visit **[http://127.0.0.1:8766](http://127.0.0.1:8766)** to monitor active threads, review timeline evidence, answer agent clarification queries, and approve or reject remediation actions.
+
+To run the Web UI independently:
+```powershell
 .\.venv\Scripts\python -m UI.main.server
 ```
-Visit **http://127.0.0.1:8766** to view real-time investigation threads, inspect tool outputs, respond to operator inquiries, and chat with the agent.
 
 ---
 
-## 🧪 Testing & Evaluation
+## 📊 Research Benchmark & Evaluation
 
-### Offline Simulation (Replay Pre-Recorded Attack Logs)
-Scan pre-recorded Sysmon `.evtx` logs without live execution:
-```bash
-.\.venv\Scripts\python detection/watch.py --file detection/test_data/exec_sysmon_1_lolbin_pcalua.evtx
-```
+Triagent was rigorously evaluated across 10 controlled scenarios (5 real-world attack simulations and 5 benign administrative false alarms):
 
-### Run Full Test Suite
-Run all unit tests across the detection pipeline, forensic tools, verdict validation, and web UI:
-```bash
+- **Attack Accuracy**: **70.0%** (3 Yes, 1 Partial weighted at 0.5, 1 No out of 5 attacks)
+- **Benign Resolution**: **100.0%** (5 of 5 false alarms safely cleared, 0 wrongly escalated)
+- **Median Time to Verdict**: **52.0 seconds**
+- **Average Cost per Investigation**: **$0.1358**
+
+For full technical details, video demonstrations, and downloadable simulation scripts:
+- 🌐 **Live Research Webpage**: [https://realgobz.github.io/Triagent-Research/](https://realgobz.github.io/Triagent-Research/)
+- 📄 **Research Paper (PDF)**: Available on the research site or in [`hackathon/research/Triagent-Research-Paper.pdf`](https://realgobz.github.io/Triagent-Research/Triagent-Research-Paper.pdf).
+
+---
+
+## 🧪 Running Unit Tests
+
+To run the test suite across the detection pipeline, forensic tools, verdict verification, and UI servers:
+
+```powershell
 .\.venv\Scripts\python -m unittest discover tests
 ```
 
-### View Evaluated Runs
-Review all recorded investigations and metrics extracted for your report:
-```bash
-.\.venv\Scripts\python record_run.py --view
-```
-
 ---
 
-## 📂 Repository Structure
+## 📂 Repository Layout
 
 ```text
-├── agent/                  # LangGraph autonomous agent workflow
-│   ├── agent.py            # Graph definition, nodes, routers
+├── agent/                  # LangGraph autonomous agent workflow & nodes
+│   ├── agent.py            # Graph definition, router logic, and execution steps
 │   ├── memory.py           # SqliteSaver checkpointer & thread history
-│   ├── results_db.py       # Append-only verdicts database (results.db)
+│   ├── results_db.py       # Append-only verdicts database
 │   ├── verdict.py          # Structured verdict validation & evidence checking
-│   └── tools/              # Forensic tool implementations
-│       └── tools.py        # 12 forensic investigation tools + containment
-├── detection/              # Detection engine & Sysmon listener
-│   ├── watch.py            # Event pipeline & live Sysmon listener
+│   └── tools/              # 12 forensic investigation & response tools
+├── detection/              # Detection engine & live Sysmon pipeline
+│   ├── watch.py            # Live Sysmon channel listener
 │   ├── dispatch.py         # Alert deduplication & dispatcher
-│   ├── record.py           # 24h SQLite event retention (events.db)
-│   ├── rules/              # 600+ Sigma detection YAML rules
-│   └── test_data/          # Sample attack .evtx logs
+│   ├── record.py           # 24-hour SQLite event retention (events.db)
+│   └── rules/              # 600+ compiled Sigma detection rules
 ├── UI/                     # User interface servers & static assets
-│   ├── HITL/               # Human-In-The-Loop approval server (port 8765)
-│   └── main/               # Investigation dashboard & chat UI (port 8766)
-├── setup/                  # Cloud infrastructure & deployment automation
-│   ├── azure.bicep         # Azure AI Foundry & Model deployment Bicep template
-│   ├── extract_rules.py    # Sigma rule archive extraction utility
-│   └── setup.ps1           # PowerShell environment setup script
-├── hackathon/              # Research & scenario testing documentation
-│   └── hackathon plan.md   # Lab attack matrix (A1..A10, B1..B12, S1)
-├── record_run.py           # Automated telemetry extraction script
-├── config.py               # Global settings, paths, and system prompts
-├── utils.py                # Sysmon XML parser, Sigma evaluator, hash helpers
-├── requirements.txt        # Python package dependencies
-├── setup.sh                # Universal bash setup script
-└── .env.example            # Environment configuration template
+│   ├── HITL/               # Human-in-the-loop approval server (port 8765)
+│   ├── main/               # Investigation dashboard & chat UI (port 8766)
+│   └── brand/              # Triagent brand design tokens & vector logos
+├── hackathon/              # Research paper, scenario evaluations, & manifest data
+│   └── research/           # Standalone research webpage, PDF, & benchmark data
+├── setup.bat               # Windows all-in-one launcher
+├── setup.ps1               # Automated setup & environment configuration
+└── requirements.txt        # Python package dependencies
 ```
 
 ---

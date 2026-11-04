@@ -1,0 +1,22 @@
+{
+  "attacks_total": 5,
+  "attacks_yes": 3,
+  "attacks_partial": 1,
+  "attacks_no": 1,
+  "attack_score": 3.5,
+  "attack_accuracy_pct": 70.0,
+  "benign_total": 5,
+  "benign_cleared": 5,
+  "benign_escalated": 0,
+  "benign_accuracy_pct": 100.0,
+  "avg_time_to_verdict_seconds": 82.7,
+  "median_time_to_verdict_seconds": 52.0,
+  "avg_tokens": 339404,
+  "avg_cost_usd": 0.1358,
+  "notes": [
+    "One benchmark run per scenario under controlled desktop conditions; does not establish statistical significance.",
+    "A2 represents an intentional documented miss due to a benign text-placeholder payload and internal staging address.",
+    "A3 resulted in a documented disagreement between alerts (partial outcome weighted at 0.5), yielding an attack accuracy of 3.5 / 5 (70.0%).",
+    "All benign scenarios (B1-B5) were successfully cleared as false positives (5 / 5 = 100.0%), with B2 resolved autonomously in 30 seconds without human interruption."
+  ]
+}

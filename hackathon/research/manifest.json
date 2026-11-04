@@ -1,0 +1,472 @@
+[
+  {
+    "id": "A1",
+    "kind": "attack",
+    "title": "Spearphishing Trojan Dropper (.pdf.exe)",
+    "mitre": [
+      {
+        "id": "T1204.002",
+        "name": "User Execution: Malicious File",
+        "url": "https://attack.mitre.org/techniques/T1204/002/"
+      },
+      {
+        "id": "T1547.001",
+        "name": "Boot or Logon Autostart Execution: Registry Run Keys / Startup Folder",
+        "url": "https://attack.mitre.org/techniques/T1547/001/"
+      }
+    ],
+    "rule_fired": "Suspicious Double Extension File Execution (high)",
+    "alerts_count": 1,
+    "what_it_would_do": "An accounting employee receives a targeted email with an attachment named `Invoice_Payment_Due.pdf.exe`. Because Windows hides file extensions by default, it appears simply as `Invoice_Payment_Due.pdf` with a PDF icon. The user double-clicks it expecting an invoice.\n\nIn a real-world intrusion, the executable presents a decoy PDF while silently dropping a secondary payload into `%TEMP%` or `%APPDATA%`, establishes reboot persistence via `HKCU\\...\\Run`, and connects outbound to an external Command & Control (C2) server to dump credentials and move laterally.",
+    "what_agent_did": "Triagent investigated the process lineage and identified a disguised Windows binary named Invoice_Payment_Due.pdf.exe running from the Downloads directory. The agent verified the binary signature, queried the user via HITL to confirm the execution was unauthorized, and obtained operator approval to terminate the running process. It then quarantined the disguised executable from the Downloads folder, successfully neutralizing the active threat before concluding true positive.",
+    "tools_used": [
+      "plan",
+      "get_process_tree",
+      "get_children",
+      "get_events_for_process",
+      "is_process_running",
+      "get_events_by_hash",
+      "get_events_in_window",
+      "get_rule_context",
+      "get_file_info",
+      "get_file_signature",
+      "lookup_hash",
+      "get_live_connections",
+      "ask_user",
+      "kill_process",
+      "quarantine_file",
+      "submit_verdict",
+      "respond"
+    ],
+    "time_to_verdict": "3m",
+    "tokens_cost": {
+      "tokens": 409285,
+      "usd": 0.1637
+    },
+    "verdict": "true_positive",
+    "expected_verdict": "true_positive",
+    "outcome": "yes",
+    "outcome_note": "Triagent correctly classified the disguised executable as a true positive attack. Through HITL intervention, the agent successfully terminated the rogue process and quarantined the dropper, though persistence registry keys and dropped temp scripts were left as documented remaining risks.",
+    "video_file": "videos/A1.mp4",
+    "script_file": "scripts/A1.ps1",
+    "script_publishable": true,
+    "mitre_reference_only": false
+  },
+  {
+    "id": "A2",
+    "kind": "attack",
+    "title": "Ingress Tool Transfer via Certutil",
+    "mitre": [
+      {
+        "id": "T1105",
+        "name": "Ingress Tool Transfer",
+        "url": "https://attack.mitre.org/techniques/T1105/"
+      }
+    ],
+    "rule_fired": "Suspicious File Downloaded From Direct IP Via Certutil.EXE (high)",
+    "alerts_count": 3,
+    "what_it_would_do": "An attacker uses the built-in Microsoft certificate utility (`certutil.exe`) to download a secondary payload (such as a remote access trojan, ransomware loader, or credential dumper) directly from a remote staging server into `%TEMP%`.\n\nBecause `certutil.exe` is signed by Microsoft and native to all modern Windows systems, living-off-the-land techniques bypass standard application-whitelisting policies and basic download filters. Once staged, the binary is executed to establish interactive C2 control.",
+    "what_agent_did": "Triagent investigated the certutil.exe download command line, queried process trees and historical events, and inspected the downloaded payload in the Temp directory. Because the simulated payload was a harmless text placeholder, signature analysis returned an error and VirusTotal had no malicious detection record, while the private IP address appeared internal. Consequently, the agent erroneously concluded that the download was benign without prompting the human operator, resulting in a false positive verdict on a true attack.",
+    "tools_used": [
+      "plan",
+      "get_process_tree",
+      "get_children",
+      "get_events_for_process",
+      "is_process_running",
+      "get_rule_context",
+      "get_events_in_window",
+      "get_file_info",
+      "get_file_signature",
+      "get_events_by_hash",
+      "exa_search",
+      "lookup_hash",
+      "submit_verdict"
+    ],
+    "time_to_verdict": "57s",
+    "tokens_cost": {
+      "tokens": 133530,
+      "usd": 0.0534
+    },
+    "verdict": "false_positive",
+    "expected_verdict": "true_positive",
+    "outcome": "no",
+    "outcome_note": "Documented miss. Triagent misclassified the ingress tool transfer as a false positive due to the harmless dummy payload and private staging IP, taking no containment action.",
+    "video_file": "videos/A2.mp4",
+    "script_file": "scripts/A2.ps1",
+    "script_publishable": true,
+    "mitre_reference_only": false
+  },
+  {
+    "id": "A3",
+    "kind": "attack",
+    "title": "Obfuscated PowerShell Download-and-Run",
+    "mitre": [
+      {
+        "id": "T1059.001",
+        "name": "Command and Scripting Interpreter: PowerShell",
+        "url": "https://attack.mitre.org/techniques/T1059/001/"
+      },
+      {
+        "id": "T1027",
+        "name": "Obfuscated Files or Information",
+        "url": "https://attack.mitre.org/techniques/T1027/"
+      }
+    ],
+    "rule_fired": "Suspicious PowerShell Encoded Command Patterns (high)",
+    "alerts_count": 2,
+    "what_it_would_do": "An attacker launches PowerShell with a Base64-encoded command line (`-EncodedCommand`) to conceal execution details from casual monitoring and command-line logging. The encoded payload downloads an unsigned secondary PowerShell script directly into memory or disk and executes it immediately.\n\nIn an actual attack, the downloaded script typically establishes an encrypted remote shell or persistence mechanism to facilitate remote control.",
+    "what_agent_did": "This attack produced two separate alerts on the same encoded PowerShell command line, three minutes apart. The FIRST alert was investigated and closed as false_positive with high confidence, without asking the operator. The SECOND alert, on the same underlying activity, was investigated independently, recognized the obfuscated execution pattern, asked the operator to confirm, received a 'no, not authorized' response, and was correctly escalated to true_positive with an approved process kill. Because we score by the attack's primary (earliest) alert, and that alert returned false_positive, this attack is scored as a documented disagreement between alerts, not a clean pass — even though the correct verdict was reached three minutes later on a related alert.",
+    "tools_used": [
+      "plan",
+      "get_process_tree",
+      "get_children",
+      "get_events_for_process",
+      "get_events_in_window",
+      "get_rule_context",
+      "get_file_info",
+      "get_file_signature",
+      "get_events_by_hash",
+      "lookup_hash",
+      "is_process_running",
+      "get_live_connections",
+      "ask_user",
+      "kill_process",
+      "quarantine_file",
+      "submit_verdict",
+      "respond"
+    ],
+    "time_to_verdict": "3m 17s",
+    "tokens_cost": {
+      "tokens": 772554,
+      "usd": 0.3090
+    },
+    "verdict": "true_positive",
+    "expected_verdict": "true_positive",
+    "outcome": "partial",
+    "outcome_note": "Documented disagreement between alerts. The earliest alert was closed as a false positive, while the correlated pattern alert three minutes later correctly identified the attack, confirmed with the operator, and terminated the process.",
+    "video_file": "videos/A3.mp4",
+    "script_file": "scripts/A3.ps1",
+    "script_publishable": true,
+    "mitre_reference_only": false
+  },
+  {
+    "id": "A4",
+    "kind": "attack",
+    "title": "OS Credential Dumping via LSASS Memory",
+    "mitre": [
+      {
+        "id": "T1003.001",
+        "name": "OS Credential Dumping: LSASS Memory",
+        "url": "https://attack.mitre.org/techniques/T1003/001/"
+      }
+    ],
+    "rule_fired": "Process Memory Dump Via Comsvcs.DLL (high)",
+    "alerts_count": 2,
+    "what_it_would_do": "An adversary executes `rundll32.exe comsvcs.dll, MiniDump` against the Local Security Authority Subsystem Service (`lsass.exe`) process memory to create a raw memory dump file (`lsass.dmp`).\n\nBecause LSASS caches active user credentials, NTLM password hashes, and Kerberos tickets in RAM, extracting this memory file enables offline recovery of administrative authentication credentials.",
+    "what_agent_did": "Both alerts independently classified the comsvcs.dll LSASS dump command as a true positive without needing to ask the operator. A kill was proposed and approved; by the time it ran, the short-lived rundll32 process had already exited on its own, so the first kill attempt returned 'already exited.' A second kill attempt on the same alert returned an error (process GUID not found), which we are documenting rather than smoothing over — it suggests a timing/reference issue in the response tool when a target has already exited, worth investigating further.",
+    "tools_used": [
+      "plan",
+      "get_process_tree",
+      "get_children",
+      "get_events_for_process",
+      "get_rule_context",
+      "is_process_running",
+      "get_events_in_window",
+      "get_file_info",
+      "get_file_signature",
+      "get_events_by_hash",
+      "lookup_hash",
+      "exa_search",
+      "get_live_connections",
+      "submit_verdict",
+      "kill_process",
+      "respond"
+    ],
+    "time_to_verdict": "47s",
+    "tokens_cost": {
+      "tokens": 94605,
+      "usd": 0.0378
+    },
+    "verdict": "true_positive",
+    "expected_verdict": "true_positive",
+    "outcome": "yes",
+    "outcome_note": "Both alerts were independently classified as true positive credential dumping attempts without human queries. Process termination was attempted after operator approval, but the short-lived rundll32 process had already exited, and a subsequent kill attempt returned an error.",
+    "video_file": "videos/A4.mp4",
+    "script_file": null,
+    "script_publishable": false,
+    "script_publishable_reason": "Destructive technique involving LSASS process memory dumping via comsvcs.dll; published as MITRE reference only to prevent weaponization.",
+    "mitre_reference_only": true
+  },
+  {
+    "id": "A5",
+    "kind": "attack",
+    "title": "Inhibiting System Recovery (Shadow Copies Deletion)",
+    "mitre": [
+      {
+        "id": "T1490",
+        "name": "Inhibit System Recovery",
+        "url": "https://attack.mitre.org/techniques/T1490/"
+      },
+      {
+        "id": "T1070",
+        "name": "Indicator Removal",
+        "url": "https://attack.mitre.org/techniques/T1070/"
+      }
+    ],
+    "rule_fired": "Shadow Copies Deletion Using Operating Systems Utilities (high)",
+    "alerts_count": 1,
+    "what_it_would_do": "An attacker invokes native Windows recovery management tools (`vssadmin.exe delete shadows /all /quiet`) to silently purge all Volume Shadow Copies and system restore points.\n\nThis behavior is a common precursor to ransomware deployment. By destroying local snapshots prior to file encryption, the attacker prevents victims from recovering their files using native Windows backup utilities.",
+    "what_agent_did": "Triagent reconstructed an elevated process tree where a persistent PowerShell session repeatedly created and executed a hidden script (backup-cleaner.ps1) to invoke vssadmin.exe with quiet shadow-copy deletion flags. The agent queried Exa technical intelligence and rule context to analyze the deletion pattern, requested operator authorization to terminate the active parent PowerShell session, and quarantined the malicious script file, delivering a high-confidence true positive verdict in under two minutes.",
+    "tools_used": [
+      "plan",
+      "get_process_tree",
+      "get_children",
+      "get_events_for_process",
+      "get_events_in_window",
+      "get_rule_context",
+      "get_file_info",
+      "get_file_signature",
+      "get_events_by_hash",
+      "lookup_hash",
+      "is_process_running",
+      "exa_search",
+      "get_live_connections",
+      "kill_process",
+      "submit_verdict",
+      "respond",
+      "quarantine_file"
+    ],
+    "time_to_verdict": "1m 54s",
+    "tokens_cost": {
+      "tokens": 830158,
+      "usd": 0.3321
+    },
+    "verdict": "true_positive",
+    "expected_verdict": "true_positive",
+    "outcome": "yes",
+    "outcome_note": "Triagent successfully identified the ransomware precursor activity, terminated the live elevated PowerShell process upon operator approval, and quarantined the dropper script, completely remediating the active execution.",
+    "video_file": "videos/A5.mp4",
+    "script_file": null,
+    "script_publishable": false,
+    "script_publishable_reason": "Destructive technique involving Volume Shadow Copy deletion via vssadmin commonly associated with ransomware precursors; published as MITRE reference only to prevent weaponization.",
+    "mitre_reference_only": true
+  },
+  {
+    "id": "B1",
+    "kind": "benign",
+    "title": "Indirect Command Execution via Pcalua (Calculator)",
+    "mitre": [
+      {
+        "id": "T1202",
+        "name": "Indirect Command Execution",
+        "url": "https://attack.mitre.org/techniques/T1202/"
+      }
+    ],
+    "rule_fired": "Use of Pcalua For Execution (medium)",
+    "alerts_count": 1,
+    "what_agent_did": "Triagent examined the execution of the Windows Program Compatibility Assistant (pcalua.exe) launching calc.exe. It verified that both executables were valid Microsoft-signed binaries, observed zero network connections or persistence artifacts, and asked the operator to confirm whether the calculator launch was intentional. Upon operator confirmation, it promptly submitted a false positive verdict.",
+    "tools_used": [
+      "plan",
+      "get_process_tree",
+      "get_children",
+      "get_events_for_process",
+      "get_events_in_window",
+      "get_rule_context",
+      "get_events_by_hash",
+      "get_file_info",
+      "get_file_signature",
+      "is_process_running",
+      "lookup_hash",
+      "exa_search",
+      "ask_user",
+      "submit_verdict"
+    ],
+    "time_to_verdict": "50s",
+    "tokens_cost": {
+      "tokens": 150513,
+      "usd": 0.0602
+    },
+    "verdict": "false_positive",
+    "expected_verdict": "false_positive",
+    "outcome": "yes",
+    "outcome_note": "Correctly cleared. The agent recognized the benign nature of the dual-signed LOLBin process launch and verified user intent via a single HITL query.",
+    "video_file": "videos/B1.mp4",
+    "script_file": "scripts/B1.ps1",
+    "script_publishable": true,
+    "mitre_reference_only": false
+  },
+  {
+    "id": "B2",
+    "kind": "benign",
+    "title": "Administrative Encoded PowerShell Health Check",
+    "mitre": [
+      {
+        "id": "T1059.001",
+        "name": "Command and Scripting Interpreter: PowerShell",
+        "url": "https://attack.mitre.org/techniques/T1059/001/"
+      }
+    ],
+    "rule_fired": "Suspicious Encoded PowerShell Command Line (high)",
+    "alerts_count": 2,
+    "what_agent_did": "Triagent inspected an encoded PowerShell command line, decoded the Base64 payload, and discovered a harmless maintenance string printing a system health status. In the primary alert investigation, the agent confirmed the absence of external network connections, persistence keys, or dropped files, clearing the alert as a false positive in 30 seconds without requiring human disruption.",
+    "tools_used": [
+      "plan",
+      "get_process_tree",
+      "get_children",
+      "get_events_for_process",
+      "get_events_in_window",
+      "get_rule_context",
+      "get_events_by_hash",
+      "get_file_info",
+      "get_file_signature",
+      "is_process_running",
+      "lookup_hash",
+      "exa_search",
+      "submit_verdict"
+    ],
+    "time_to_verdict": "30s",
+    "tokens_cost": {
+      "tokens": 202436,
+      "usd": 0.0810
+    },
+    "verdict": "false_positive",
+    "expected_verdict": "false_positive",
+    "outcome": "yes",
+    "outcome_note": "Correctly cleared. The agent decoded the administrative health check script and cleared the alert autonomously with zero human intervention in 30 seconds.",
+    "video_file": "videos/B2.mp4",
+    "script_file": "scripts/B2.ps1",
+    "script_publishable": true,
+    "mitre_reference_only": false
+  },
+  {
+    "id": "B3",
+    "kind": "benign",
+    "title": "Developer Pre-Flight Privilege Check (whoami /priv)",
+    "mitre": [
+      {
+        "id": "T1033",
+        "name": "System Owner/User Discovery",
+        "url": "https://attack.mitre.org/techniques/T1033/"
+      }
+    ],
+    "rule_fired": "Security Privileges Enumeration Via Whoami.EXE (high)",
+    "alerts_count": 1,
+    "what_agent_did": "Triagent investigated the execution of whoami.exe /priv launched from an administrative PowerShell terminal. The agent verified that whoami.exe was a genuine Microsoft-signed system executable with 0 detections on VirusTotal and confirmed no subsequent malicious commands or network traffic were generated. It verified the developer's pre-flight intent via a single HITL query and closed the alert as a false positive.",
+    "tools_used": [
+      "plan",
+      "get_process_tree",
+      "get_children",
+      "get_events_for_process",
+      "get_rule_context",
+      "get_events_in_window",
+      "get_file_info",
+      "get_file_signature",
+      "get_events_by_hash",
+      "lookup_hash",
+      "is_process_running",
+      "ask_user",
+      "submit_verdict"
+    ],
+    "time_to_verdict": "48s",
+    "tokens_cost": {
+      "tokens": 244379,
+      "usd": 0.0978
+    },
+    "verdict": "false_positive",
+    "expected_verdict": "false_positive",
+    "outcome": "yes",
+    "outcome_note": "Correctly cleared. The agent validated the developer privilege check through system telemetry and verified operator authorization before clearing the alert.",
+    "video_file": "videos/B3.mp4",
+    "script_file": "scripts/B3.ps1",
+    "script_publishable": true,
+    "mitre_reference_only": false
+  },
+  {
+    "id": "B4",
+    "kind": "benign",
+    "title": "Maintenance Scheduled Task Creation (Notepad Updater)",
+    "mitre": [
+      {
+        "id": "T1053.005",
+        "name": "Scheduled Task/Job: Scheduled Task",
+        "url": "https://attack.mitre.org/techniques/T1053/005/"
+      }
+    ],
+    "rule_fired": "Suspicious Schtasks Schedule Types (high)",
+    "alerts_count": 3,
+    "what_agent_did": "Triagent investigated the creation of a one-time scheduled task (B4_AppUpdater) via schtasks.exe configured to execute notepad.exe. It verified that both schtasks.exe and notepad.exe were legitimate Microsoft-signed utilities, observed that the task was immediately removed after execution, and confirmed with the operator that the scheduled task was authorized maintenance, concluding false positive.",
+    "tools_used": [
+      "plan",
+      "get_process_tree",
+      "get_children",
+      "get_events_for_process",
+      "get_rule_context",
+      "get_events_in_window",
+      "get_file_info",
+      "get_file_signature",
+      "get_events_by_hash",
+      "lookup_hash",
+      "is_process_running",
+      "ask_user",
+      "submit_verdict"
+    ],
+    "time_to_verdict": "52s",
+    "tokens_cost": {
+      "tokens": 290793,
+      "usd": 0.1163
+    },
+    "verdict": "false_positive",
+    "expected_verdict": "false_positive",
+    "outcome": "yes",
+    "outcome_note": "Correctly cleared. All three generated alerts were confirmed as benign administrative maintenance tasks and safely cleared without escalation.",
+    "video_file": "videos/B4.mp4",
+    "script_file": "scripts/B4.ps1",
+    "script_publishable": true,
+    "mitre_reference_only": false
+  },
+  {
+    "id": "B5",
+    "kind": "benign",
+    "title": "Standard User Shell Folders Startup Configuration",
+    "mitre": [
+      {
+        "id": "T1547.001",
+        "name": "Boot or Logon Autostart Execution: Registry Run Keys / Startup Folder",
+        "url": "https://attack.mitre.org/techniques/T1547/001/"
+      }
+    ],
+    "rule_fired": "User Shell Folders Registry Modification via CommandLine (high)",
+    "alerts_count": 1,
+    "what_agent_did": "Triagent inspected the modification of the User Shell Folders Startup registry key by reg.exe. Telemetry analysis revealed that the written value matched the standard Windows default %USERPROFILE% Startup path rather than an unauthorized or disguised executable. The agent verified the Microsoft digital signature of reg.exe, confirmed with the operator that the registry update was intentional, and designated the alert as a false positive.",
+    "tools_used": [
+      "plan",
+      "get_process_tree",
+      "get_children",
+      "get_events_for_process",
+      "get_rule_context",
+      "get_events_in_window",
+      "get_process_tree",
+      "get_file_info",
+      "get_file_signature",
+      "get_events_by_hash",
+      "lookup_hash",
+      "is_process_running",
+      "get_live_connections",
+      "ask_user",
+      "submit_verdict"
+    ],
+    "time_to_verdict": "52s",
+    "tokens_cost": {
+      "tokens": 265787,
+      "usd": 0.1063
+    },
+    "verdict": "false_positive",
+    "expected_verdict": "false_positive",
+    "outcome": "yes",
+    "outcome_note": "Correctly cleared. The agent verified that the registry command only restored the legitimate operating system default startup directory and cleared the alert upon user confirmation.",
+    "video_file": "videos/B5.mp4",
+    "script_file": "scripts/B5.ps1",
+    "script_publishable": true,
+    "mitre_reference_only": false
+  }
+]
