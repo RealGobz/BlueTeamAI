@@ -110,7 +110,7 @@ Triagent was rigorously evaluated across 10 controlled scenarios (5 real-world a
 
 For full technical details, video demonstrations, and downloadable simulation scripts:
 - 🌐 **Live Research Webpage**: [https://realgobz.github.io/Triagent-Research/](https://realgobz.github.io/Triagent-Research/)
-- 📄 **Research Paper (PDF)**: Available on the research site or in [`hackathon/research/Triagent-Research-Paper.pdf`](https://realgobz.github.io/Triagent-Research/Triagent-Research-Paper.pdf).
+- 📄 **Research Paper (PDF)**: [Triagent-Research-Paper.pdf](https://realgobz.github.io/Triagent-Research/Triagent-Research-Paper.pdf)
 
 ---
 
@@ -142,8 +142,6 @@ To run the test suite across the detection pipeline, forensic tools, verdict ver
 │   ├── HITL/               # Human-in-the-loop approval server (port 8765)
 │   ├── main/               # Investigation dashboard & chat UI (port 8766)
 │   └── brand/              # Triagent brand design tokens & vector logos
-├── hackathon/              # Research paper, scenario evaluations, & manifest data
-│   └── research/           # Standalone research webpage, PDF, & benchmark data
 ├── setup.bat               # Windows all-in-one launcher
 ├── setup.ps1               # Automated setup & environment configuration
 └── requirements.txt        # Python package dependencies

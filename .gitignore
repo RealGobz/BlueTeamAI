@@ -55,9 +55,8 @@ tools/db/*.sqlite-shm
 tools/db/*.jsonl
 tools/db/current_scenario.txt
 
-# Keep directory structure & conclusion run table
+# Keep directory structure
 !tools/db/.gitkeep
-!tools/db/conclusion_run.csv
 
 # Cache & memory directories
 tools/cache/*
@@ -83,9 +82,15 @@ scratch/*
 !scratch/.gitkeep
 sigma_master.zip
 
-# Personal developer notes
+# Personal developer notes & non-project artifacts
 my planning
 next steps.md
+about.md
+record_run.py
+tools/db/conclusion_run.csv
+
+# Hackathon evaluation & benchmark files (hosted on separate Triagent-Research repo)
+hackathon/
 
 # OS & IDE metadata
 .vscode/
