@@ -3,7 +3,6 @@
 > **"What if every alert came with an answer?"**  
 > *An AI security analyst that investigates Windows alerts, and asks before it acts.*
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20%7C%20Server-0078D6.svg)](https://www.microsoft.com/windows)
 [![Engine: LangGraph](https://img.shields.io/badge/Agent-LangGraph-FF6F00.svg)](https://github.com/langchain-ai/langgraph)
 [![Research: Benchmark](https://img.shields.io/badge/Research-10%20Scenario%20Benchmark-brightgreen.svg)](https://realgobz.github.io/Triagent-Research/)
@@ -149,5 +148,3 @@ To run the test suite across the detection pipeline, forensic tools, verdict ver
 
 ---
 
-## 📄 License
-This project is licensed under the Apache License 2.0.
